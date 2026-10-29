@@ -81,7 +81,9 @@ final class Controller: NSObject, NSTextFieldDelegate {
 
     private func show(_ url: URL) {
         // A new capture while typing replaces the screenshot, not the prompt.
+        // While a send is running, the sent screenshot stays.
         if hasText {
+            if field?.isEditable == false { return }
             image = url
             thumbnail?.image = NSImage(contentsOf: url)
             return
