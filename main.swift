@@ -3,12 +3,14 @@
 // type" launcher, for screenshots.
 //
 // Shottr saves every capture to ~/Pictures as SCR-*.png ("Save after capture" on).
-// A new file there pops a small panel by the mouse. The panel is
-// non-activating: it takes the keyboard without bringing this app forward, so
-// no Accessibility or Input Monitoring permission is needed. Enter sends the
-// prompt through `t3-dispatch --image`. While the prompt is empty, Esc, a
-// Cmd/Ctrl shortcut, switching apps, or 5 seconds idle closes it; once you
-// have typed, only Esc does.
+// A new file there pops a small thumbnail icon by the mouse, which is where
+// the capture region ended. Typing, or clicking the icon, opens the prompt
+// panel. Both are non-activating: they take the keyboard without bringing this
+// app forward, so no Accessibility or Input Monitoring permission is needed.
+// Enter sends the prompt through `t3-dispatch --image`. The icon stays when you
+// switch apps and goes on Esc, a Cmd/Ctrl shortcut, or 20 seconds idle. While
+// the prompt is empty, Esc, a Cmd/Ctrl shortcut, switching apps, or 5 seconds
+// idle closes the panel; once you have typed, only Esc does.
 
 import AppKit
 
@@ -19,11 +21,24 @@ let dispatchBin = env["SHOT_PROMPT_DISPATCH"] ?? home.appendingPathComponent(".l
 // The project folder the new thread opens in.
 let threadCwd = env["SHOT_PROMPT_CWD"] ?? home.path
 let idleSeconds: TimeInterval = 5
+// The icon waits longer: it is small and keeps out of the way.
+let iconSeconds: TimeInterval = 20
 // The prompt grows up to this many lines, then scrolls.
 let maxPromptLines: CGFloat = 6
 
 final class PromptPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+}
+
+// The capture icon. It handles the click itself, so the click opens the
+// prompt instead of moving the window, and works before the icon is key.
+final class ClickView: NSView {
+    var onClick: () -> Void = {}
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func mouseDown(with event: NSEvent) { onClick() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }
 
 // NSTextView has no placeholder of its own.
@@ -74,6 +89,7 @@ final class TopClipView: NSClipView {
 final class Controller: NSObject, NSTextViewDelegate {
     private var known = Set<String>()
     private var source: DispatchSourceFileSystemObject?
+    private var icon: PromptPanel?
     private var panel: PromptPanel?
     private var field: PromptTextView?
     private var scroll: NSScrollView?
@@ -139,6 +155,92 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
         dismiss()
         image = url
+        let size: CGFloat = 56
+        let p = PromptPanel(
+            contentRect: NSRect(x: 0, y: 0, width: size, height: size),
+            styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered, defer: false)
+        p.level = .floating
+        p.hidesOnDeactivate = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+
+        let content = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        content.material = .hudWindow
+        content.state = .active
+        content.wantsLayer = true
+        content.layer?.cornerRadius = 12
+        content.layer?.masksToBounds = true
+        p.contentView = content
+
+        let iv = NSImageView(frame: content.bounds.insetBy(dx: 6, dy: 6))
+        iv.image = NSImage(contentsOf: url)
+        iv.imageScaling = .scaleProportionallyUpOrDown
+        iv.wantsLayer = true
+        iv.layer?.cornerRadius = 6
+        iv.layer?.masksToBounds = true
+        content.addSubview(iv)
+        // A speech bubble on the corner says "ask about this".
+        let badge = NSImageView(frame: NSRect(x: size - 22, y: 2, width: 20, height: 20))
+        badge.image = NSImage(systemSymbolName: "bubble.left.circle.fill", accessibilityDescription: nil)
+        badge.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+            .applying(.init(paletteColors: [.white, .controlAccentColor]))
+        content.addSubview(badge)
+        let click = ClickView(frame: content.bounds)
+        click.toolTip = "Type or click to ask Claude about this capture"
+        click.onClick = { [weak self] in self?.expand() }
+        content.addSubview(click)
+
+        // The mouse is where the capture region ended; sit just past it.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
+        var origin = NSPoint(x: mouse.x + 8, y: mouse.y - size - 8)
+        let vis = screen.visibleFrame
+        origin.x = min(max(origin.x, vis.minX + 8), vis.maxX - size - 8)
+        origin.y = min(max(origin.y, vis.minY + 8), vis.maxY - size - 8)
+        p.setFrameOrigin(origin)
+
+        icon = p
+        p.orderFrontRegardless()
+        p.makeKey()
+
+        // Esc or Cmd/Ctrl (Cmd+V into another app) before any typing means the
+        // capture was meant for something else: get out of the way. Any other
+        // key on the icon opens the prompt and becomes its first character.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let w = event.window, w === self.panel || w === self.icon else { return event }
+            if event.keyCode == 53 { self.dismiss(); return nil }
+            let mods = event.modifierFlags.intersection([.command, .control])
+            if !mods.isEmpty && !self.hasText {
+                self.dismiss()
+                return nil
+            }
+            if w === self.icon {
+                self.expand()
+                self.field?.keyDown(with: event)
+                return nil
+            }
+            return event
+        }
+        // Switching apps before typing means the capture was not for Claude,
+        // so an empty prompt closes. The icon stays to be clicked later, and
+        // after typing the panel keeps its text; click it to keep going.
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            if self?.panel != nil { self?.dismissIfEmpty() }
+        }
+        armIdle(iconSeconds)
+    }
+
+    // Opens the prompt panel where the icon was.
+    private func expand() {
+        guard let i = icon, let url = image else { return }
+        let anchor = i.frame
+        i.orderOut(nil)
+        icon = nil
         let width: CGFloat = 420, thumb: CGFloat = 64
         let p = PromptPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: thumb + 20),
@@ -218,9 +320,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         s.textColor = .secondaryLabelColor
         content.addSubview(s)
 
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
-        var origin = NSPoint(x: mouse.x - width / 2, y: mouse.y - p.frame.height - 24)
+        let screen = i.screen ?? NSScreen.main!
+        var origin = NSPoint(x: anchor.minX, y: anchor.maxY - p.frame.height)
         let vis = screen.visibleFrame
         origin.x = min(max(origin.x, vis.minX + 8), vis.maxX - width - 8)
         origin.y = min(max(origin.y, vis.minY + 8), vis.maxY - p.frame.height - 8)
@@ -232,33 +333,15 @@ final class Controller: NSObject, NSTextViewDelegate {
         p.makeKey()
         p.makeFirstResponder(f)
 
-        // Cmd/Ctrl before any typing means the capture was meant for something
-        // else (Cmd+V into another app): get out of the way.
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === self.panel else { return event }
-            if event.keyCode == 53 { self.dismiss(); return nil }
-            let mods = event.modifierFlags.intersection([.command, .control])
-            if !mods.isEmpty && !self.hasText {
-                self.dismiss()
-                return nil
-            }
-            return event
-        }
-        // Switching apps before typing means the capture was not for Claude.
-        // After typing, keep the panel and its text; click it to keep going.
-        let center = NSWorkspace.shared.notificationCenter
-        activationObserver = center.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.dismissIfEmpty() }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: p, queue: .main
         ) { [weak self] _ in self?.dismissIfEmpty() }
         armIdle()
     }
 
-    private func armIdle() {
+    private func armIdle(_ seconds: TimeInterval = idleSeconds) {
         idleTimer?.invalidate()
-        idleTimer = Timer.scheduledTimer(withTimeInterval: idleSeconds, repeats: false) { [weak self] _ in
+        idleTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             self?.dismissIfEmpty()
         }
     }
@@ -367,6 +450,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         activationObserver = nil; resignObserver = nil
         clipObservers.forEach(NotificationCenter.default.removeObserver)
         clipObservers = []
+        icon?.orderOut(nil)
+        icon = nil
         panel?.orderOut(nil)
         panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; image = nil
     }
