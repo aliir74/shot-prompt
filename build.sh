@@ -9,7 +9,11 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 mkdir -p "$APP/Contents/MacOS"
 swiftc -O -o "$APP/Contents/MacOS/ShotPrompt" main.swift
 cp Info.plist "$APP/Contents/Info.plist"
-codesign --force --sign - "$APP"
+# Ad-hoc signing pins TCC grants to the cdhash, which changes on every build,
+# so macOS asked for Downloads access again after each rebuild. A designated
+# requirement on the bundle ID survives rebuilds.
+codesign --force --sign - \
+  --requirements "=designated => identifier \"$LABEL\"" "$APP"
 
 sed -e "s|__APP__|$APP|" \
     -e "s|__CWD__|${SHOT_PROMPT_CWD:-$HOME}|" \
