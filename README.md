@@ -1,5 +1,8 @@
 # ShotPrompt
 
+[![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/aliir74)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/aliir74)
+
 Take a [Shottr](https://shottr.cc) capture, start typing, press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
 
 - Watches `~/Pictures` for new `SCR-*.png` files (turn on Shottr's "save after capture").
@@ -22,3 +25,15 @@ This builds `~/Applications/ShotPrompt.app` and loads the `io.github.aliir74.sho
 Uninstall: `launchctl bootout gui/$(id -u)/io.github.aliir74.shot-prompt`, then delete the plist in `~/Library/LaunchAgents` and the app.
 
 macOS, Swift 5.9+.
+
+## Support This Project
+
+If you find this project useful, consider supporting its development:
+
+- Star this repo
+- Report bugs and submit PRs
+- [Sponsor on GitHub](https://github.com/sponsors/aliir74) or [Buy me a coffee](https://www.buymeacoffee.com/aliir74)
+
+## License
+
+MIT
