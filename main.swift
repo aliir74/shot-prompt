@@ -232,6 +232,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     private func fitPrompt() {
         guard let p = panel, let f = field, let sv = scroll,
               let lm = f.layoutManager, let tc = f.textContainer, let font = f.font else { return }
+        // Measure at full width: a legacy scroller narrows the text, and text
+        // that fits without one should not keep it.
+        sv.hasVerticalScroller = false
+        sv.tile()
         lm.ensureLayout(for: tc)
         let line = ceil(lm.defaultLineHeight(for: font))
         let used = ceil(lm.usedRect(for: tc).height), cap = line * maxPromptLines
