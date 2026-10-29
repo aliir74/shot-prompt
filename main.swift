@@ -170,9 +170,13 @@ final class Controller: NSObject, NSTextViewDelegate {
         let content = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: size, height: size))
         content.material = .hudWindow
         content.state = .active
-        content.wantsLayer = true
-        content.layer?.cornerRadius = 12
-        content.layer?.masksToBounds = true
+        // A layer cornerRadius leaves the blur's square corners drawn as white;
+        // a mask image clips the material itself and the window shadow follows it.
+        content.maskImage = NSImage(size: content.bounds.size, flipped: false) { r in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: r, xRadius: 12, yRadius: 12).fill()
+            return true
+        }
         p.contentView = content
 
         let iv = NSImageView(frame: content.bounds.insetBy(dx: 6, dy: 6))
@@ -429,8 +433,9 @@ final class Controller: NSObject, NSTextViewDelegate {
             let (ok, out) = dispatch(prompt: prompt, image: url)
             DispatchQueue.main.async {
                 if ok {
-                    self.status?.stringValue = "✓ launched in T3"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.dismiss() }
+                    // The thread is already open in T3; vanish at once, no fade.
+                    self.panel?.animationBehavior = .none
+                    self.dismiss()
                 } else {
                     f.isEditable = true
                     self.status?.stringValue = "failed: " + out
