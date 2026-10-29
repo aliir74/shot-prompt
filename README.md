@@ -3,12 +3,13 @@
 [![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/aliir74)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/aliir74)
 
-Take a [Shottr](https://shottr.cc) capture, start typing, press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
+Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
 
 - Watches `~/Pictures` for new `SCR-*.png` or `.jpeg` files (turn on Shottr's "save after capture").
-- Shows a small panel by the mouse that takes the keyboard without bringing the app forward. No Accessibility or Input Monitoring permission is needed.
+- Shows a small thumbnail icon by the mouse, where the capture region ended. Typing, or clicking the icon, opens the prompt panel. Both take the keyboard without bringing the app forward. No Accessibility or Input Monitoring permission is needed.
+- The icon stays when you switch apps, so you can click it later. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
 - Enter runs `$SHOT_PROMPT_DISPATCH --cwd "$SHOT_PROMPT_CWD" --image <capture> "<prompt>"`.
-- Before you type, Esc, switching to another app, a Cmd/Ctrl shortcut, or 5 seconds idle closes the panel. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
+- Before you type in the panel, Esc, switching to another app, a Cmd/Ctrl shortcut, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
 
 ## Dispatch command
 
