@@ -140,7 +140,6 @@ final class Controller: NSObject, NSTextViewDelegate {
         let sv = NSScrollView(frame: NSRect(x: x, y: 42, width: w, height: 18))
         sv.drawsBackground = false
         sv.borderType = .noBorder
-        sv.hasVerticalScroller = true
         sv.autohidesScrollers = true
         // It sits under the transparent title bar; without this AppKit insets
         // its top and the last line hides behind a scroller.
@@ -235,7 +234,10 @@ final class Controller: NSObject, NSTextViewDelegate {
               let lm = f.layoutManager, let tc = f.textContainer, let font = f.font else { return }
         lm.ensureLayout(for: tc)
         let line = ceil(lm.defaultLineHeight(for: font))
-        let h = min(max(ceil(lm.usedRect(for: tc).height), line), line * maxPromptLines)
+        let used = ceil(lm.usedRect(for: tc).height), cap = line * maxPromptLines
+        let h = min(max(used, line), cap)
+        // A scroller only past the cap, so it does not flash on each new line.
+        sv.hasVerticalScroller = used > cap
         let top: CGFloat = 24, bottom: CGFloat = 42, thumb: CGFloat = 64
         let height = max(thumb + 20, bottom + h + top)
         if p.frame.height != height {
