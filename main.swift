@@ -48,7 +48,11 @@ final class Controller: NSObject, NSTextFieldDelegate {
 
     private func listCaptures() -> [String] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: captureDir.path)) ?? []
-        return names.filter { $0.hasPrefix("SCR-") && $0.lowercased().hasSuffix(".png") }
+        // Shottr's "Auto" format saves photos-heavy captures as JPEG.
+        let types = [".png", ".jpg", ".jpeg"]
+        return names.filter { name in
+            name.hasPrefix("SCR-") && types.contains { name.lowercased().hasSuffix($0) }
+        }
     }
 
     private func scan() {
