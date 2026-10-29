@@ -6,8 +6,9 @@
 // A new file there pops a small panel by the mouse. The panel is
 // non-activating: it takes the keyboard without bringing this app forward, so
 // no Accessibility or Input Monitoring permission is needed. Enter sends the
-// prompt through `t3-dispatch --image`; Esc, a Cmd/Ctrl shortcut on an empty
-// prompt, or 5 seconds without typing closes it.
+// prompt through `t3-dispatch --image`. While the prompt is empty, Esc, a
+// Cmd/Ctrl shortcut, switching apps, or 5 seconds idle closes it; once you
+// have typed, only Esc does.
 
 import AppKit
 
@@ -28,6 +29,7 @@ final class Controller: NSObject, NSTextFieldDelegate {
     private var source: DispatchSourceFileSystemObject?
     private var panel: PromptPanel?
     private var field: NSTextField?
+    private var thumbnail: NSImageView?
     private var status: NSTextField?
     private var image: URL?
     private var idleTimer: Timer?
@@ -75,7 +77,17 @@ final class Controller: NSObject, NSTextFieldDelegate {
         }
     }
 
+    private var hasText: Bool { !(field?.stringValue.isEmpty ?? true) }
+
     private func show(_ url: URL) {
+        // A new capture while typing replaces the screenshot, not the prompt.
+        // While a send is running, the sent screenshot stays.
+        if hasText {
+            if field?.isEditable == false { return }
+            image = url
+            thumbnail?.image = NSImage(contentsOf: url)
+            return
+        }
         dismiss()
         image = url
         let width: CGFloat = 420, thumb: CGFloat = 64
@@ -131,7 +143,7 @@ final class Controller: NSObject, NSTextFieldDelegate {
         origin.y = min(max(origin.y, vis.minY + 8), vis.maxY - p.frame.height - 8)
         p.setFrameOrigin(origin)
 
-        panel = p; field = f; status = s
+        panel = p; field = f; thumbnail = iv; status = s
         p.orderFrontRegardless()
         p.makeKey()
         p.makeFirstResponder(f)
@@ -148,24 +160,27 @@ final class Controller: NSObject, NSTextFieldDelegate {
             }
             return event
         }
-        // Switching apps means the capture was not for Claude: never let the
-        // panel keep the keyboard behind another app.
+        // Switching apps before typing means the capture was not for Claude.
+        // After typing, keep the panel and its text; click it to keep going.
         let center = NSWorkspace.shared.notificationCenter
         activationObserver = center.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.dismiss() }
+        ) { [weak self] _ in self?.dismissIfEmpty() }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: p, queue: .main
-        ) { [weak self] _ in self?.dismiss() }
+        ) { [weak self] _ in self?.dismissIfEmpty() }
         armIdle()
     }
 
     private func armIdle() {
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: idleSeconds, repeats: false) { [weak self] _ in
-            guard let self, self.field?.stringValue.isEmpty ?? true else { return }
-            self.dismiss()
+            self?.dismissIfEmpty()
         }
+    }
+
+    private func dismissIfEmpty() {
+        if !hasText { dismiss() }
     }
 
     func controlTextDidChange(_ obj: Notification) {
@@ -209,7 +224,7 @@ final class Controller: NSObject, NSTextFieldDelegate {
         if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
         activationObserver = nil; resignObserver = nil
         panel?.orderOut(nil)
-        panel = nil; field = nil; status = nil; image = nil
+        panel = nil; field = nil; thumbnail = nil; status = nil; image = nil
     }
 }
 
