@@ -40,12 +40,44 @@ final class PromptTextView: NSTextView {
     }
 }
 
+// A thin rounded knob with no track, like an overlay scroller, whichever
+// scroller style the system picks.
+final class ThinScroller: NSScroller {
+    override class var isCompatibleWithOverlayScrollers: Bool { true }
+
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize,
+                                      scrollerStyle: NSScroller.Style) -> CGFloat { 8 }
+
+    override func draw(_ dirtyRect: NSRect) { drawKnob() }
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+
+    override func drawKnob() {
+        let r = rect(for: .knob).insetBy(dx: 2, dy: 2)
+        NSColor.labelColor.withAlphaComponent(0.3).setFill()
+        NSBezierPath(roundedRect: r, xRadius: r.width / 2, yRadius: r.width / 2).fill()
+    }
+}
+
+// While the text fits, stay at the top: the text view scrolls to the caret on
+// a new line before the panel has grown to show it.
+final class TopClipView: NSClipView {
+    var pinTop = true
+
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var r = super.constrainBoundsRect(proposedBounds)
+        if pinTop { r.origin.y = 0 }
+        return r
+    }
+}
+
 final class Controller: NSObject, NSTextViewDelegate {
     private var known = Set<String>()
     private var source: DispatchSourceFileSystemObject?
     private var panel: PromptPanel?
     private var field: PromptTextView?
     private var scroll: NSScrollView?
+    private var clipObservers: [NSObjectProtocol] = []
     private var thumbnail: NSImageView?
     private var status: NSTextField?
     private var image: URL?
@@ -134,6 +166,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         iv.wantsLayer = true
         iv.layer?.cornerRadius = 6
         iv.layer?.masksToBounds = true
+        iv.autoresizingMask = [.minYMargin]
         content.addSubview(iv)
 
         let x = thumb + 20, w = width - x - 12
@@ -144,6 +177,12 @@ final class Controller: NSObject, NSTextViewDelegate {
         // It sits under the transparent title bar; without this AppKit insets
         // its top and the last line hides behind a scroller.
         sv.automaticallyAdjustsContentInsets = false
+        sv.verticalScroller = ThinScroller()
+        let clip = TopClipView()
+        clip.drawsBackground = false
+        sv.contentView = clip
+        // The panel grows downward, so the prompt grows with it.
+        sv.autoresizingMask = [.height]
         let f = PromptTextView(frame: NSRect(origin: .zero, size: sv.contentSize))
         f.placeholder = "Type to ask Claude about this capture"
         f.font = .systemFont(ofSize: 15)
@@ -164,6 +203,14 @@ final class Controller: NSObject, NSTextViewDelegate {
         f.delegate = self
         sv.documentView = f
         content.addSubview(sv)
+        clip.wantsLayer = true
+        clip.layer?.mask = CAGradientLayer()
+        clip.postsBoundsChangedNotifications = true
+        clip.postsFrameChangedNotifications = true
+        for name in [NSView.boundsDidChangeNotification, NSView.frameDidChangeNotification] {
+            clipObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: clip, queue: .main) { [weak self] _ in self?.updateFade() })
+        }
 
         let s = NSTextField(labelWithString: "↩ new T3 thread · esc dismiss")
         s.frame = NSRect(x: x, y: 12, width: w, height: 16)
@@ -242,6 +289,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         let h = min(max(used, line), cap)
         // A scroller only past the cap, so it does not flash on each new line.
         sv.hasVerticalScroller = used > cap
+        (sv.contentView as? TopClipView)?.pinTop = used <= cap
         let top: CGFloat = 24, bottom: CGFloat = 42, thumb: CGFloat = 64
         let height = max(thumb + 20, bottom + h + top)
         if p.frame.height != height {
@@ -251,11 +299,35 @@ final class Controller: NSObject, NSTextViewDelegate {
             if let vis = p.screen?.visibleFrame, frame.minY < vis.minY + 8 {
                 frame.origin.y = vis.minY + 8
             }
-            p.setFrame(frame, display: true)
+            // The prompt and thumbnail follow the panel by autoresizing.
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = p.isVisible ? 0.12 : 0
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                p.animator().setFrame(frame, display: true)
+            } completionHandler: {
+                f.scrollRangeToVisible(f.selectedRange())
+            }
         }
-        sv.frame = NSRect(x: sv.frame.minX, y: height - top - h, width: sv.frame.width, height: h)
-        thumbnail?.frame.origin.y = height - 10 - thumb
         f.scrollRangeToVisible(f.selectedRange())
+        updateFade()
+    }
+
+    // Once the prompt scrolls, fade the text into whichever edge hides more.
+    private func updateFade() {
+        guard let sv = scroll, let f = field,
+              let mask = sv.contentView.layer?.mask as? CAGradientLayer else { return }
+        let b = sv.contentView.bounds
+        let scrolls = sv.hasVerticalScroller
+        let above = scrolls && b.minY > 0.5
+        let below = scrolls && b.maxY < f.frame.height - 0.5
+        let edge = NSNumber(value: Double(min(24 / max(b.height, 1), 0.5)))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.frame = sv.contentView.layer?.bounds ?? .zero
+        mask.colors = [above ? NSColor.clear : NSColor.black, NSColor.black, NSColor.black,
+                       below ? NSColor.clear : NSColor.black].map(\.cgColor)
+        mask.locations = [0, edge, NSNumber(value: 1 - edge.doubleValue), 1]
+        CATransaction.commit()
     }
 
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -293,6 +365,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         if let o = activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(o) }
         if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
         activationObserver = nil; resignObserver = nil
+        clipObservers.forEach(NotificationCenter.default.removeObserver)
+        clipObservers = []
         panel?.orderOut(nil)
         panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; image = nil
     }
