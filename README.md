@@ -8,7 +8,7 @@ Take a [Shottr](https://shottr.cc) capture, start typing, press Enter: a new [T3
 - Watches `~/Pictures` for new `SCR-*.png` or `.jpeg` files (turn on Shottr's "save after capture").
 - Shows a small panel by the mouse that takes the keyboard without bringing the app forward. No Accessibility or Input Monitoring permission is needed.
 - Enter runs `$SHOT_PROMPT_DISPATCH --cwd "$SHOT_PROMPT_CWD" --image <capture> "<prompt>"`.
-- Esc, switching to another app, a Cmd/Ctrl shortcut before typing, or 5 seconds idle closes the panel. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
+- Before you type, Esc, switching to another app, a Cmd/Ctrl shortcut, or 5 seconds idle closes the panel. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
 
 ## Dispatch command
 
