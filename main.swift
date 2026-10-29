@@ -19,16 +19,33 @@ let dispatchBin = env["SHOT_PROMPT_DISPATCH"] ?? home.appendingPathComponent(".l
 // The project folder the new thread opens in.
 let threadCwd = env["SHOT_PROMPT_CWD"] ?? home.path
 let idleSeconds: TimeInterval = 5
+// The prompt grows up to this many lines, then scrolls.
+let maxPromptLines: CGFloat = 6
 
 final class PromptPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-final class Controller: NSObject, NSTextFieldDelegate {
+// NSTextView has no placeholder of its own.
+final class PromptTextView: NSTextView {
+    var placeholder = ""
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, let font else { return }
+        let x = textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0)
+        (placeholder as NSString).draw(
+            at: NSPoint(x: x, y: textContainerInset.height),
+            withAttributes: [.font: font, .foregroundColor: NSColor.placeholderTextColor])
+    }
+}
+
+final class Controller: NSObject, NSTextViewDelegate {
     private var known = Set<String>()
     private var source: DispatchSourceFileSystemObject?
     private var panel: PromptPanel?
-    private var field: NSTextField?
+    private var field: PromptTextView?
+    private var scroll: NSScrollView?
     private var thumbnail: NSImageView?
     private var status: NSTextField?
     private var image: URL?
@@ -77,7 +94,7 @@ final class Controller: NSObject, NSTextFieldDelegate {
         }
     }
 
-    private var hasText: Bool { !(field?.stringValue.isEmpty ?? true) }
+    private var hasText: Bool { !(field?.string.isEmpty ?? true) }
 
     private func show(_ url: URL) {
         // A new capture while typing replaces the screenshot, not the prompt.
@@ -120,14 +137,34 @@ final class Controller: NSObject, NSTextFieldDelegate {
         content.addSubview(iv)
 
         let x = thumb + 20, w = width - x - 12
-        let f = NSTextField(frame: NSRect(x: x, y: 34, width: w, height: 26))
-        f.placeholderString = "Type to ask Claude about this capture"
+        let sv = NSScrollView(frame: NSRect(x: x, y: 42, width: w, height: 18))
+        sv.drawsBackground = false
+        sv.borderType = .noBorder
+        sv.hasVerticalScroller = true
+        sv.autohidesScrollers = true
+        // It sits under the transparent title bar; without this AppKit insets
+        // its top and the last line hides behind a scroller.
+        sv.automaticallyAdjustsContentInsets = false
+        let f = PromptTextView(frame: NSRect(origin: .zero, size: sv.contentSize))
+        f.placeholder = "Type to ask Claude about this capture"
         f.font = .systemFont(ofSize: 15)
-        f.isBezeled = false
         f.drawsBackground = false
+        f.isRichText = false
+        f.allowsUndo = true
+        f.isAutomaticQuoteSubstitutionEnabled = false
+        f.isAutomaticDashSubstitutionEnabled = false
         f.focusRingType = .none
+        f.textContainerInset = .zero
+        f.textContainer?.lineFragmentPadding = 0
+        f.textContainer?.widthTracksTextView = true
+        f.isVerticallyResizable = true
+        f.isHorizontallyResizable = false
+        f.autoresizingMask = [.width]
+        f.minSize = NSSize(width: 0, height: 0)
+        f.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         f.delegate = self
-        content.addSubview(f)
+        sv.documentView = f
+        content.addSubview(sv)
 
         let s = NSTextField(labelWithString: "↩ new T3 thread · esc dismiss")
         s.frame = NSRect(x: x, y: 12, width: w, height: 16)
@@ -143,7 +180,8 @@ final class Controller: NSObject, NSTextFieldDelegate {
         origin.y = min(max(origin.y, vis.minY + 8), vis.maxY - p.frame.height - 8)
         p.setFrameOrigin(origin)
 
-        panel = p; field = f; thumbnail = iv; status = s
+        panel = p; field = f; scroll = sv; thumbnail = iv; status = s
+        fitPrompt()
         p.orderFrontRegardless()
         p.makeKey()
         p.makeFirstResponder(f)
@@ -154,7 +192,7 @@ final class Controller: NSObject, NSTextFieldDelegate {
             guard let self, event.window === self.panel else { return event }
             if event.keyCode == 53 { self.dismiss(); return nil }
             let mods = event.modifierFlags.intersection([.command, .control])
-            if !mods.isEmpty && (self.field?.stringValue.isEmpty ?? true) {
+            if !mods.isEmpty && !self.hasText {
                 self.dismiss()
                 return nil
             }
@@ -183,12 +221,38 @@ final class Controller: NSObject, NSTextFieldDelegate {
         if !hasText { dismiss() }
     }
 
-    func controlTextDidChange(_ obj: Notification) {
+    func textDidChange(_ notification: Notification) {
         idleTimer?.invalidate()
-        if field?.stringValue.isEmpty ?? true { armIdle() }
+        if !hasText { armIdle() }
+        field?.needsDisplay = true
+        fitPrompt()
     }
 
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+    // Grow the prompt (and the panel, downward from its top edge) to fit the
+    // text, up to maxPromptLines; past that the prompt scrolls.
+    private func fitPrompt() {
+        guard let p = panel, let f = field, let sv = scroll,
+              let lm = f.layoutManager, let tc = f.textContainer, let font = f.font else { return }
+        lm.ensureLayout(for: tc)
+        let line = ceil(lm.defaultLineHeight(for: font))
+        let h = min(max(ceil(lm.usedRect(for: tc).height), line), line * maxPromptLines)
+        let top: CGFloat = 24, bottom: CGFloat = 42, thumb: CGFloat = 64
+        let height = max(thumb + 20, bottom + h + top)
+        if p.frame.height != height {
+            var frame = p.frame
+            frame.origin.y = frame.maxY - height
+            frame.size.height = height
+            if let vis = p.screen?.visibleFrame, frame.minY < vis.minY + 8 {
+                frame.origin.y = vis.minY + 8
+            }
+            p.setFrame(frame, display: true)
+        }
+        sv.frame = NSRect(x: sv.frame.minX, y: height - top - h, width: sv.frame.width, height: h)
+        thumbnail?.frame.origin.y = height - 10 - thumb
+        f.scrollRangeToVisible(f.selectedRange())
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         if selector == #selector(NSResponder.insertNewline(_:)) { send(); return true }
         if selector == #selector(NSResponder.cancelOperation(_:)) { dismiss(); return true }
         return false
@@ -196,7 +260,7 @@ final class Controller: NSObject, NSTextFieldDelegate {
 
     private func send() {
         guard let url = image, let f = field else { return }
-        let prompt = f.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = f.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
         f.isEditable = false
         status?.stringValue = "launching…"
@@ -224,7 +288,7 @@ final class Controller: NSObject, NSTextFieldDelegate {
         if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
         activationObserver = nil; resignObserver = nil
         panel?.orderOut(nil)
-        panel = nil; field = nil; thumbnail = nil; status = nil; image = nil
+        panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; image = nil
     }
 }
 
