@@ -23,6 +23,8 @@ let threadCwd = env["SHOT_PROMPT_CWD"] ?? home.path
 let idleSeconds: TimeInterval = 5
 // The icon waits longer: it is small and keeps out of the way.
 let iconSeconds: TimeInterval = 20
+// After you switch to another app, the icon leaves this soon.
+let iconAwaySeconds: TimeInterval = 3
 // The prompt grows up to this many lines, then scrolls.
 let maxPromptLines: CGFloat = 6
 
@@ -229,12 +231,19 @@ final class Controller: NSObject, NSTextViewDelegate {
             return event
         }
         // Switching apps before typing means the capture was not for Claude,
-        // so an empty prompt closes. The icon stays to be clicked later, and
-        // after typing the panel keeps its text; click it to keep going.
+        // so an empty prompt closes and the icon leaves soon after. After
+        // typing the panel keeps its text; click it to keep going.
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            if self?.panel != nil { self?.dismissIfEmpty() }
+        ) { [weak self] note in
+            guard let self else { return }
+            if self.panel != nil { self.dismissIfEmpty(); return }
+            // Shottr itself can come forward around a capture; that is not a switch.
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            if self.icon != nil && app?.bundleIdentifier != "cc.ffitch.shottr" {
+                let left = self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0
+                if left > iconAwaySeconds { self.armIdle(iconAwaySeconds) }
+            }
         }
         armIdle(iconSeconds)
     }
