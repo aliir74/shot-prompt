@@ -6,11 +6,26 @@
 Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
 
 - Watches `~/Pictures` for new `SCR-*.png` or `.jpeg` files (turn on Shottr's "save after capture").
-- Shows a small thumbnail icon by the mouse, where the capture region ended. Typing, or clicking the icon, opens the prompt panel. Both take the keyboard without bringing the app forward. No Accessibility or Input Monitoring permission is needed.
+- Shows a small thumbnail icon by the mouse, where the capture region ended. Typing, or clicking the icon, opens the prompt panel. Both take the keyboard without bringing the app forward. No Accessibility or Input Monitoring permission is needed (only the optional [paste into T3](#paste-into-t3) setting needs Accessibility).
 - The icon leaves 3 seconds after you switch to another app, so you can still click it on the way. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
 - The project picker at the bottom right says which T3 project gets the thread. It starts on `$SHOT_PROMPT_CWD`; Tab (or a click) opens the list of your T3 projects, pinned first, then most recently used. Arrow keys or type-to-select, then Enter, pick one.
 - Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> "<prompt>"`.
 - Before you type in the panel, Esc, switching to another app, a Cmd/Ctrl shortcut, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
+
+## Paste into T3
+
+With this setting on, a capture taken while T3 Code is the app in use skips the icon and the panel: the screenshot lands in the chat open in T3, as if you had pressed Cmd+V there, and you type your message in T3 itself. Captures taken in other apps work as before.
+
+```sh
+defaults write io.github.aliir74.shot-prompt pasteIntoT3 -bool true    # on
+defaults write io.github.aliir74.shot-prompt pasteIntoT3 -bool false   # off
+```
+
+It is read at every capture, so no restart is needed. How it works:
+
+- Shottr is in front during a capture, so the app the capture was taken in is the last other app that came forward.
+- The capture goes on the clipboard (as PNG), T3's chat composer takes the focus through the macOS Accessibility API, and Cmd+V goes to T3. Focusing the composer first matters: T3 drops a pasted image when the focus is elsewhere, for example after you select text in the chat or in an HTML render.
+- This drives another app, so ShotPrompt needs Accessibility (System Settings > Privacy & Security > Accessibility). macOS asks the first time. Until you allow it, or when T3 shows no chat to paste into, the capture gets the icon as usual.
 
 ## Dispatch command
 
@@ -39,8 +54,8 @@ scripts/coverage.sh      # run them with coverage; fails below 100% of lines
 
 The code is a Swift package with two targets:
 
-- `Sources/ShotPromptCore`: everything that decides something. Capture detection and the wait for Shottr to finish writing, the T3 project list from SQLite (ordering, archived/deleted and missing-folder filtering), the picker list (default project first, parent folder on duplicate titles), what Esc, Cmd/Ctrl, Tab, Enter and app switches do, panel and prompt sizing, the scroll fade, and running the dispatch command. `scripts/coverage.sh` requires every line here to be covered.
-- `Sources/ShotPrompt/main.swift`: the AppKit shell, excluded from the threshold. It holds the panel and view subclasses, the window setup and teardown in `Controller`, the key monitor, timers, notification observers and the run loop. Each of these needs a window server and real AppKit events, so it calls into Core for every decision and only applies the result to windows and views.
+- `Sources/ShotPromptCore`: everything that decides something. Capture detection and the wait for Shottr to finish writing, the T3 project list from SQLite (ordering, archived/deleted and missing-folder filtering), the picker list (default project first, parent folder on duplicate titles), what Esc, Cmd/Ctrl, Tab, Enter and app switches do, panel and prompt sizing, the scroll fade, running the dispatch command, and for the paste into T3: which app a capture was taken in, finding T3's composer in its accessibility tree, and the capture as PNG. `scripts/coverage.sh` requires every line here to be covered.
+- `Sources/ShotPrompt/main.swift`: the AppKit shell, excluded from the threshold. It holds the panel and view subclasses, the window setup and teardown in `Controller`, the key monitor, timers, notification observers, the Accessibility calls and Cmd+V for the paste into T3, and the run loop. Each of these needs a window server and real AppKit events, so it calls into Core for every decision and only applies the result to windows and views.
 
 CI (`.github/workflows/tests.yml`) runs `scripts/coverage.sh` and a release build of the app on every pull request.
 
