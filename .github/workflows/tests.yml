@@ -1,0 +1,17 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - name: Tests and 100% line coverage of ShotPromptCore
+        run: scripts/coverage.sh
+      - name: Release build of the app
+        run: swift build -c release --product ShotPrompt

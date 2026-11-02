@@ -7,7 +7,8 @@ LABEL=io.github.aliir74.shot-prompt
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O -o "$APP/Contents/MacOS/ShotPrompt" main.swift
+swift build -c release --product ShotPrompt
+cp "$(swift build -c release --show-bin-path)/ShotPrompt" "$APP/Contents/MacOS/ShotPrompt"
 cp Info.plist "$APP/Contents/Info.plist"
 # Ad-hoc signing pins TCC grants to the cdhash, which changes on every build,
 # so macOS asked for Downloads access again after each rebuild. A designated
