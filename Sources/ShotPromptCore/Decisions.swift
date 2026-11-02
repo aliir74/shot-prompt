@@ -10,10 +10,15 @@ public enum CaptureAction: Equatable {
     case replaceImage
     // Nothing typed: drop what is there and show the icon for the new capture.
     case showIcon
+    // Nothing typed, and the capture was taken in T3 with the paste setting on:
+    // drop what is there and paste the capture into T3's open chat.
+    case pasteIntoT3
 }
 
-public func captureAction(hasText: Bool, editable: Bool) -> CaptureAction {
-    guard hasText else { return .showIcon }
+// Text in the panel means you already chose the panel, so a new capture swaps
+// its screenshot even when it was taken in T3.
+public func captureAction(hasText: Bool, editable: Bool, pasteIntoT3: Bool = false) -> CaptureAction {
+    guard hasText else { return pasteIntoT3 ? .pasteIntoT3 : .showIcon }
     return editable ? .replaceImage : .ignore
 }
 

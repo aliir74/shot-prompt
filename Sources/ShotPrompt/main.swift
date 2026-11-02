@@ -12,11 +12,14 @@
 // the prompt is empty, Esc, a Cmd/Ctrl shortcut, switching apps, or 5 seconds
 // idle closes the panel; once you have typed, only Esc does. The project
 // picker in the panel (Tab, or click it) sends the thread to another T3 project.
+// With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
+// that and lands in the chat open there, as if you pressed Cmd+V in it.
 
 // This file is the AppKit shell: windows, views, event monitors, timers and
 // observers. Every decision it acts on lives in ShotPromptCore, which has the tests.
 
 import AppKit
+import Carbon.HIToolbox
 import ShotPromptCore
 
 let config = Config(environment: ProcessInfo.processInfo.environment,
@@ -101,27 +104,126 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var keyMonitor: Any?
     private var activationObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
+    // The last app to come forward that is neither Shottr nor this one: the
+    // app a capture is taken in, while Shottr is in front for the capture.
+    private var lastApp: NSRunningApplication?
+    private var lastAppObserver: NSObjectProtocol?
 
     func start() {
         watcher.onCapture = { [weak self] url in self?.show(url) }
         do { try watcher.start() } catch { fatalError("cannot watch \(config.captureDir.path)") }
+        lastApp = NSWorkspace.shared.frontmostApplication.flatMap { Self.bystander($0) ? nil : $0 }
+        lastAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  !Self.bystander(app) else { return }
+            self?.lastApp = app
+        }
+    }
+
+    private static func bystander(_ app: NSRunningApplication) -> Bool {
+        isBystander(bundleID: app.bundleIdentifier,
+                    isSelf: app.processIdentifier == ProcessInfo.processInfo.processIdentifier)
     }
 
     private var hasText: Bool { !(field?.string.isEmpty ?? true) }
 
     private func show(_ url: URL) {
+        let app = capturedApp(front: NSWorkspace.shared.frontmostApplication, previous: lastApp,
+                              isBystander: Self.bystander)
+        let toT3 = pastesIntoT3(enabled: UserDefaults.standard.bool(forKey: pasteIntoT3Key),
+                                capturedBundleID: app?.bundleIdentifier)
         // A new capture while typing replaces the screenshot, not the prompt.
         // While a send is running, the sent screenshot stays.
-        switch captureAction(hasText: hasText, editable: field?.isEditable ?? true) {
+        switch captureAction(hasText: hasText, editable: field?.isEditable ?? true, pasteIntoT3: toT3) {
         case .ignore:
             return
         case .replaceImage:
             image = url
             thumbnail?.image = NSImage(contentsOf: url)
             return
+        case .pasteIntoT3:
+            dismiss()
+            paste(url, into: app!)
         case .showIcon:
-            break
+            showIcon(url)
         }
+    }
+
+    // Pastes the capture into the chat open in T3: the image goes on the
+    // clipboard, T3's composer takes the focus (also away from a selection in
+    // the chat or in an HTML render), then Cmd+V goes to T3. Driving another
+    // app needs the Accessibility permission. Without it, or when T3 shows no
+    // chat, the icon shows as usual, so the capture is never lost.
+    private func paste(_ url: URL, into app: NSRunningApplication) {
+        let ask = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        guard AXIsProcessTrustedWithOptions(ask) else {
+            NSLog("ShotPrompt: pasting into T3 needs Accessibility (System Settings > Privacy & Security)")
+            return showIcon(url)
+        }
+        guard let png = pngData(of: url) else { return showIcon(url) }
+        let t3 = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(t3, 1)
+        // Electron builds its accessibility tree only once a client asks for it.
+        AXUIElementSetAttributeValue(t3, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        // Shottr can still be in front.
+        if !app.isActive { AXUIElementSetAttributeValue(t3, kAXFrontmostAttribute as CFString, kCFBooleanTrue) }
+        let deadline = Date().addingTimeInterval(pasteWaitSeconds)
+        func attempt() {
+            if app.isActive, let composer = Self.composer(in: t3) {
+                AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setData(png, forType: .png)
+                // The focus reaches T3's page a moment after it is set.
+                DispatchQueue.main.asyncAfter(deadline: .now() + pastePollSeconds) {
+                    Self.commandV(to: app)
+                }
+                return
+            }
+            guard Date() < deadline else {
+                NSLog("ShotPrompt: T3 shows no chat to paste into")
+                return showIcon(url)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + pastePollSeconds) { attempt() }
+        }
+        attempt()
+    }
+
+    private static func axValue(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+    }
+
+    // T3's chat composer in its focused window, else in any of its windows.
+    private static func composer(in t3: AXUIElement) -> AXUIElement? {
+        var roots = axValue(t3, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        if let w = axValue(t3, kAXFocusedWindowAttribute), CFGetTypeID(w) == AXUIElementGetTypeID() {
+            roots = [w as! AXUIElement]
+        }
+        return findComposer(
+            roots: roots, limit: composerSearchLimit,
+            children: { axValue($0, kAXChildrenAttribute) as? [AXUIElement] ?? [] },
+            isComposer: { e in
+                isComposer(role: axValue(e, kAXRoleAttribute) as? String,
+                           classes: axValue(e, "AXDOMClassList") as? [String] ?? [])
+            },
+            isFocused: { axValue($0, kAXFocusedAttribute) as? Bool == true })
+    }
+
+    // Cmd+V, posted to T3 itself so it cannot land in another app.
+    private static func commandV(to app: NSRunningApplication) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: down)
+            event?.flags = .maskCommand
+            event?.postToPid(app.processIdentifier)
+        }
+    }
+
+    // The icon by the mouse for a new capture.
+    private func showIcon(_ url: URL) {
         dismiss()
         image = url
         let size = iconSize
