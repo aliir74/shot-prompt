@@ -10,16 +10,20 @@
 // Enter sends the prompt through `t3-dispatch --image`. The icon stays when you
 // switch apps and goes on Esc, a Cmd/Ctrl shortcut, or 20 seconds idle. While
 // the prompt is empty, Esc, a Cmd/Ctrl shortcut, switching apps, or 5 seconds
-// idle closes the panel; once you have typed, only Esc does.
+// idle closes the panel; once you have typed, only Esc does. The project
+// picker in the panel (Tab, or click it) sends the thread to another T3 project.
 
 import AppKit
+import SQLite3
 
 let home = FileManager.default.homeDirectoryForCurrentUser
 let env = ProcessInfo.processInfo.environment
 let captureDir = URL(fileURLWithPath: env["SHOT_PROMPT_CAPTURE_DIR"] ?? home.appendingPathComponent("Pictures").path)
 let dispatchBin = env["SHOT_PROMPT_DISPATCH"] ?? home.appendingPathComponent(".local/bin/t3-dispatch").path
-// The project folder the new thread opens in.
-let threadCwd = env["SHOT_PROMPT_CWD"] ?? home.path
+// The project folder the new thread opens in, unless you pick another.
+let threadCwd = (env["SHOT_PROMPT_CWD"] ?? home.path) as NSString
+// T3 Code's database, read only for its list of projects.
+let t3Database = env["SHOT_PROMPT_T3_DB"] ?? home.appendingPathComponent(".t3/userdata/statev2.sqlite").path
 let idleSeconds: TimeInterval = 5
 // The icon waits longer: it is small and keeps out of the way.
 let iconSeconds: TimeInterval = 20
@@ -27,6 +31,43 @@ let iconSeconds: TimeInterval = 20
 let iconAwaySeconds: TimeInterval = 3
 // The prompt grows up to this many lines, then scrolls.
 let maxPromptLines: CGFloat = 6
+
+struct Project {
+    let title: String
+    let root: String
+}
+
+// T3's projects, pinned first, then by latest thread activity. Folders that are
+// gone are left out. Any error gives an empty list, and the panel then has no picker.
+func loadProjects() -> [Project] {
+    var db: OpaquePointer?
+    defer { sqlite3_close(db) }
+    let uri = "file:\(t3Database)?mode=ro"
+    guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK else { return [] }
+    sqlite3_busy_timeout(db, 500)
+    let sql = """
+        SELECT p.title, p.workspace_root FROM projection_projects p
+        WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+        ORDER BY p.pinned_at IS NULL,
+                 (SELECT max(t.updated_at) FROM orchestration_v2_projection_threads t
+                  WHERE t.project_id = p.project_id) IS NULL,
+                 (SELECT max(t.updated_at) FROM orchestration_v2_projection_threads t
+                  WHERE t.project_id = p.project_id) DESC,
+                 p.title COLLATE NOCASE
+        """
+    var stmt: OpaquePointer?
+    defer { sqlite3_finalize(stmt) }
+    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+    var rows: [Project] = []
+    while sqlite3_step(stmt) == SQLITE_ROW {
+        guard let t = sqlite3_column_text(stmt, 0), let r = sqlite3_column_text(stmt, 1) else { continue }
+        let root = String(cString: r)
+        if FileManager.default.fileExists(atPath: root) {
+            rows.append(Project(title: String(cString: t), root: root))
+        }
+    }
+    return rows
+}
 
 final class PromptPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -98,6 +139,11 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var clipObservers: [NSObjectProtocol] = []
     private var thumbnail: NSImageView?
     private var status: NSTextField?
+    private var picker: NSPopUpButton?
+    private var menuOpen = false
+    // The app the Tab picker took the front from, until it is back in front.
+    private var returnTo: NSRunningApplication?
+    private var menuObservers: [NSObjectProtocol] = []
     private var image: URL?
     private var idleTimer: Timer?
     private var keyMonitor: Any?
@@ -216,7 +262,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         // capture was meant for something else: get out of the way. Any other
         // key on the icon opens the prompt and becomes its first character.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let w = event.window, w === self.panel || w === self.icon else { return event }
+            guard let self, !self.menuOpen,
+                  let w = event.window, w === self.panel || w === self.icon else { return event }
             if event.keyCode == 53 { self.dismiss(); return nil }
             let mods = event.modifierFlags.intersection([.command, .control])
             if !mods.isEmpty && !self.hasText {
@@ -237,9 +284,15 @@ final class Controller: NSObject, NSTextViewDelegate {
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let self else { return }
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            // The picker bringing this app forward, and handing the front back, are not switches.
+            if app?.processIdentifier == ProcessInfo.processInfo.processIdentifier { return }
+            if let r = self.returnTo, app?.processIdentifier == r.processIdentifier {
+                self.returnTo = nil
+                return
+            }
             if self.panel != nil { self.dismissIfEmpty(); return }
             // Shottr itself can come forward around a capture; that is not a switch.
-            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             if self.icon != nil && app?.bundleIdentifier != "cc.ffitch.shottr" {
                 let left = self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0
                 if left > iconAwaySeconds { self.armIdle(iconAwaySeconds) }
@@ -327,11 +380,20 @@ final class Controller: NSObject, NSTextViewDelegate {
                 forName: name, object: clip, queue: .main) { [weak self] _ in self?.updateFade() })
         }
 
-        let s = NSTextField(labelWithString: "↩ new T3 thread · esc dismiss")
+        let projects = loadProjects()
+        let s = NSTextField(labelWithString: projects.isEmpty
+            ? "↩ new T3 thread · esc dismiss" : "↩ new thread · ⇥ project · esc")
         s.frame = NSRect(x: x, y: 12, width: w, height: 16)
         s.font = .systemFont(ofSize: 11)
         s.textColor = .secondaryLabelColor
+        s.lineBreakMode = .byTruncatingTail
         content.addSubview(s)
+        if !projects.isEmpty {
+            let pp = makePicker(projects)
+            pp.frame = NSRect(x: x, y: 8, width: w, height: 22)
+            content.addSubview(pp)
+            picker = pp
+        }
 
         let screen = i.screen ?? NSScreen.main!
         var origin = NSPoint(x: anchor.minX, y: anchor.maxY - p.frame.height)
@@ -341,6 +403,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         p.setFrameOrigin(origin)
 
         panel = p; field = f; scroll = sv; thumbnail = iv; status = s
+        layoutStatus()
         fitPrompt()
         p.orderFrontRegardless()
         p.makeKey()
@@ -352,6 +415,100 @@ final class Controller: NSObject, NSTextViewDelegate {
         armIdle()
     }
 
+    // The project the thread opens in: SHOT_PROMPT_CWD first, then the rest.
+    // Titles T3 shows twice get their parent folder.
+    private func makePicker(_ projects: [Project]) -> NSPopUpButton {
+        let pp = NSPopUpButton(frame: .zero, pullsDown: false)
+        pp.isBordered = false
+        pp.controlSize = .small
+        pp.font = .systemFont(ofSize: 11)
+        (pp.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtCenter
+        let start = threadCwd.standardizingPath
+        var list = projects
+        if let i = list.firstIndex(where: { ($0.root as NSString).standardizingPath == start }) {
+            list.insert(list.remove(at: i), at: 0)
+        } else {
+            list.insert(Project(title: (start as NSString).lastPathComponent, root: start), at: 0)
+        }
+        var counts: [String: Int] = [:]
+        list.forEach { counts[$0.title, default: 0] += 1 }
+        for p in list {
+            let parent = ((p.root as NSString).deletingLastPathComponent as NSString).lastPathComponent
+            let name = counts[p.title, default: 0] > 1 ? "\(p.title) · \(parent)" : p.title
+            // Its own action, since Tab pops the menu up outside the button.
+            let item = NSMenuItem(title: name, action: #selector(pickedProject(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = p.root
+            item.toolTip = (p.root as NSString).abbreviatingWithTildeInPath
+            pp.menu?.addItem(item)
+        }
+        pp.toolTip = "T3 project for the new thread (Tab)"
+        // While the menu is open, the empty-panel timers and observers must not close it.
+        menuObservers = [
+            NotificationCenter.default.addObserver(
+                forName: NSMenu.didBeginTrackingNotification, object: pp.menu, queue: .main
+            ) { [weak self] _ in
+                self?.menuOpen = true
+                self?.idleTimer?.invalidate()
+            },
+            NotificationCenter.default.addObserver(
+                forName: NSMenu.didEndTrackingNotification, object: pp.menu, queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.menuOpen = false
+                self.panel?.makeKey()
+                if let f = self.field { self.panel?.makeFirstResponder(f) }
+                if !self.hasText { self.armIdle() }
+            },
+        ]
+        return pp
+    }
+
+    // A menu takes arrow keys only while its app is active, so ShotPrompt comes
+    // forward for the menu and then gives the front back to the app you were in.
+    private func openPicker(_ pp: NSPopUpButton) {
+        returnTo = NSWorkspace.shared.frontmostApplication
+        if returnTo?.processIdentifier == ProcessInfo.processInfo.processIdentifier { returnTo = nil }
+        NSApp.activate(ignoringOtherApps: true)
+        // A menu shown while the switch is still settling closes at once.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self, self.picker === pp else { return }
+            pp.menu?.popUp(positioning: pp.selectedItem, at: .zero, in: pp)
+            // The panel takes the keyboard back once this app has stepped back;
+            // a key panel loses the keyboard while its app is still giving up the front.
+            guard let back = self.returnTo, back.activate() else { self.refocus(); return }
+            var token: NSObjectProtocol?
+            token = NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                if let t = token { NotificationCenter.default.removeObserver(t) }
+                self?.refocus()
+            }
+        }
+    }
+
+    private func refocus() {
+        panel?.makeKey()
+        if let f = field { panel?.makeFirstResponder(f) }
+    }
+
+    @objc private func pickedProject(_ item: NSMenuItem) {
+        picker?.select(item)
+        layoutStatus()
+        if let f = field { panel?.makeFirstResponder(f) }
+    }
+
+    // The picker sits at the right edge, as wide as the chosen title; the hint
+    // label takes the rest.
+    private func layoutStatus() {
+        guard let pp = picker, let s = status, let font = pp.font else { return }
+        let right = (s.superview?.bounds.width ?? 0) - 12
+        let title = (pp.titleOfSelectedItem ?? "") as NSString
+        let pw = min(ceil(title.size(withAttributes: [.font: font]).width) + 26, 200)
+        pp.frame = NSRect(x: right - pw + 6, y: 8, width: pw, height: 22)
+        s.frame.size.width = max(right - pw - s.frame.minX - 4, 0)
+    }
+
     private func armIdle(_ seconds: TimeInterval = idleSeconds) {
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
@@ -360,7 +517,7 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     private func dismissIfEmpty() {
-        if !hasText { dismiss() }
+        if !hasText && !menuOpen { dismiss() }
     }
 
     func textDidChange(_ notification: Notification) {
@@ -429,6 +586,11 @@ final class Controller: NSObject, NSTextViewDelegate {
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         if selector == #selector(NSResponder.insertNewline(_:)) { send(); return true }
         if selector == #selector(NSResponder.cancelOperation(_:)) { dismiss(); return true }
+        if selector == #selector(NSResponder.insertTab(_:)), let pp = picker {
+            // After this key event returns, so the menu's tracking loop does not run inside it.
+            DispatchQueue.main.async { self.openPicker(pp) }
+            return true
+        }
         return false
     }
 
@@ -436,10 +598,12 @@ final class Controller: NSObject, NSTextViewDelegate {
         guard let url = image, let f = field else { return }
         let prompt = f.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
+        let cwd = picker?.selectedItem?.representedObject as? String ?? threadCwd as String
         f.isEditable = false
+        picker?.isEnabled = false
         status?.stringValue = "launching…"
         DispatchQueue.global().async {
-            let (ok, out) = dispatch(prompt: prompt, image: url)
+            let (ok, out) = dispatch(prompt: prompt, image: url, cwd: cwd)
             DispatchQueue.main.async {
                 if ok {
                     // The thread is already open in T3; vanish at once, no fade.
@@ -447,6 +611,8 @@ final class Controller: NSObject, NSTextViewDelegate {
                     self.dismiss()
                 } else {
                     f.isEditable = true
+                    self.picker?.isEnabled = true
+                    self.status?.toolTip = out
                     self.status?.stringValue = "failed: " + out
                     self.status?.textColor = .systemRed
                     NSLog("ShotPrompt dispatch failed: %@", out)
@@ -464,17 +630,21 @@ final class Controller: NSObject, NSTextViewDelegate {
         activationObserver = nil; resignObserver = nil
         clipObservers.forEach(NotificationCenter.default.removeObserver)
         clipObservers = []
+        menuObservers.forEach(NotificationCenter.default.removeObserver)
+        menuObservers = []
+        menuOpen = false
+        returnTo = nil
         icon?.orderOut(nil)
         icon = nil
         panel?.orderOut(nil)
-        panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; image = nil
+        panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; picker = nil; image = nil
     }
 }
 
-func dispatch(prompt: String, image: URL) -> (Bool, String) {
+func dispatch(prompt: String, image: URL, cwd: String) -> (Bool, String) {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: dispatchBin)
-    task.arguments = ["--cwd", threadCwd, "--image", image.path, prompt]
+    task.arguments = ["--cwd", cwd, "--image", image.path, prompt]
     // A LaunchAgent starts with a bare PATH; t3-dispatch needs node and git.
     var childEnv = env
     childEnv["PATH"] = "\(home.path)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"

@@ -8,12 +8,13 @@ Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), pr
 - Watches `~/Pictures` for new `SCR-*.png` or `.jpeg` files (turn on Shottr's "save after capture").
 - Shows a small thumbnail icon by the mouse, where the capture region ended. Typing, or clicking the icon, opens the prompt panel. Both take the keyboard without bringing the app forward. No Accessibility or Input Monitoring permission is needed.
 - The icon leaves 3 seconds after you switch to another app, so you can still click it on the way. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
-- Enter runs `$SHOT_PROMPT_DISPATCH --cwd "$SHOT_PROMPT_CWD" --image <capture> "<prompt>"`.
+- The project picker at the bottom right says which T3 project gets the thread. It starts on `$SHOT_PROMPT_CWD`; Tab (or a click) opens the list of your T3 projects, pinned first, then most recently used. Arrow keys or type-to-select, then Enter, pick one.
+- Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> "<prompt>"`.
 - Before you type in the panel, Esc, switching to another app, a Cmd/Ctrl shortcut, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
 
 ## Dispatch command
 
-ShotPrompt does not talk to T3 itself. It runs a command you provide, which must accept `--cwd DIR --image PATH PROMPT`, open the thread, and exit 0 (non-zero output is shown in the panel). To attach an image, the command can upload it through T3's `attachments.createUploadUrl` RPC, POST the bytes to the returned URL, and pass the `pending-…` attachment id in `orchestration.launchThread`'s `initialMessage.attachments`.
+ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userdata/statev2.sqlite`, read-only) for the project list; if it cannot, the panel has no picker and every thread goes to `$SHOT_PROMPT_CWD`. To open the thread it runs a command you provide, which must accept `--cwd DIR --image PATH PROMPT`, open the thread, and exit 0 (non-zero output is shown in the panel). To attach an image, the command can upload it through T3's `attachments.createUploadUrl` RPC, POST the bytes to the returned URL, and pass the `pending-…` attachment id in `orchestration.launchThread`'s `initialMessage.attachments`.
 
 ## Install
 
