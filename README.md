@@ -28,7 +28,21 @@ The app is ad-hoc signed with a designated requirement of just its bundle ID, so
 
 Uninstall: `launchctl bootout gui/$(id -u)/io.github.aliir74.shot-prompt`, then delete the plist in `~/Library/LaunchAgents` and the app.
 
-macOS, Swift 5.9+.
+macOS 13+, Swift 5.9+ (`build.sh` runs `swift build`).
+
+## Tests
+
+```sh
+swift test               # run the tests
+scripts/coverage.sh      # run them with coverage; fails below 100% of lines
+```
+
+The code is a Swift package with two targets:
+
+- `Sources/ShotPromptCore`: everything that decides something. Capture detection and the wait for Shottr to finish writing, the T3 project list from SQLite (ordering, archived/deleted and missing-folder filtering), the picker list (default project first, parent folder on duplicate titles), what Esc, Cmd/Ctrl, Tab, Enter and app switches do, panel and prompt sizing, the scroll fade, and running the dispatch command. `scripts/coverage.sh` requires every line here to be covered.
+- `Sources/ShotPrompt/main.swift`: the AppKit shell, excluded from the threshold. It holds the panel and view subclasses, the window setup and teardown in `Controller`, the key monitor, timers, notification observers and the run loop. Each of these needs a window server and real AppKit events, so it calls into Core for every decision and only applies the result to windows and views.
+
+CI (`.github/workflows/tests.yml`) runs `scripts/coverage.sh` and a release build of the app on every pull request.
 
 ## Support This Project
 
