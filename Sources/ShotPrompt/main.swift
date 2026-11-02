@@ -108,6 +108,8 @@ final class Controller: NSObject, NSTextViewDelegate {
     // app a capture is taken in, while Shottr is in front for the capture.
     private var lastApp: NSRunningApplication?
     private var lastAppObserver: NSObjectProtocol?
+    // Counts captures, so a paste still waiting for T3 gives way to a newer one.
+    private var captures = 0
 
     func start() {
         watcher.onCapture = { [weak self] url in self?.show(url) }
@@ -130,6 +132,7 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var hasText: Bool { !(field?.string.isEmpty ?? true) }
 
     private func show(_ url: URL) {
+        captures += 1
         let app = capturedApp(front: NSWorkspace.shared.frontmostApplication, previous: lastApp,
                               isBystander: Self.bystander)
         let toT3 = pastesIntoT3(enabled: UserDefaults.standard.bool(forKey: pasteIntoT3Key),
@@ -170,14 +173,18 @@ final class Controller: NSObject, NSTextViewDelegate {
         // Shottr can still be in front.
         if !app.isActive { AXUIElementSetAttributeValue(t3, kAXFrontmostAttribute as CFString, kCFBooleanTrue) }
         let deadline = Date().addingTimeInterval(pasteWaitSeconds)
+        let capture = captures
         func attempt() {
+            // A newer capture took over the screen, as it does from an icon.
+            guard capture == captures else { return }
             if app.isActive, let composer = Self.composer(in: t3) {
                 AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.setData(png, forType: .png)
-                // The focus reaches T3's page a moment after it is set.
+                // The focus reaches T3's page a moment after it is set. The
+                // clipboard is set right before Cmd+V, so each paste sends its own image.
                 DispatchQueue.main.asyncAfter(deadline: .now() + pastePollSeconds) {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setData(png, forType: .png)
                     Self.commandV(to: app)
                 }
                 return
