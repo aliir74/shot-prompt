@@ -637,4 +637,27 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let controller = Controller()
 controller.start()
+
+// The phone receiver (ios/README.md): on only when receiverPort and
+// receiverToken are set. Read once at launch; restart the agent after a change.
+var receiver: ReceiverServer?
+if let settings = receiverSettings(port: UserDefaults.standard.integer(forKey: receiverPortKey),
+                                   token: UserDefaults.standard.string(forKey: receiverTokenKey)) {
+    let context = ReceiverContext(
+        token: settings.token, defaultRoot: config.threadCwd,
+        projects: { loadProjects(databasePath: config.t3Database) },
+        saveImage: imageSaver(dir: FileManager.default.temporaryDirectory.appendingPathComponent("ShotPrompt-phone")),
+        dispatch: { prompt, image, cwd in
+            dispatch(executable: config.dispatchBin, prompt: prompt, image: image, cwd: cwd,
+                     environment: config.environment, home: config.home)
+        })
+    do {
+        receiver = try ReceiverServer(port: settings.port) { handle($0, context) }
+        receiver?.start { error in
+            NSLog("ShotPrompt receiver on 127.0.0.1:%d: %@", Int(settings.port), error ?? "listening")
+        }
+    } catch {
+        NSLog("ShotPrompt receiver could not start: %@", error.localizedDescription)
+    }
+}
 app.run()

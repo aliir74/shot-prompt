@@ -12,6 +12,10 @@ Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), pr
 - Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> "<prompt>"`.
 - Before you type in the panel, Esc, switching to another app, a Cmd/Ctrl shortcut, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
 
+## iPhone
+
+The app can also take screenshots from your iPhone: an iOS Shortcuts automation sends each screenshot with a prompt over Tailscale to an opt-in receiver in the app, which opens the thread the same way. Setup: [ios/README.md](ios/README.md).
+
 ## Paste into T3
 
 With this setting on, a capture taken while T3 Code is the app in use skips the icon and the panel: the screenshot lands in the chat open in T3, as if you had pressed Cmd+V there, and you type your message in T3 itself. Captures taken in other apps work as before.
@@ -55,6 +59,7 @@ scripts/coverage.sh      # run them with coverage; fails below 100% of lines
 The code is a Swift package with two targets:
 
 - `Sources/ShotPromptCore`: everything that decides something. Capture detection and the wait for Shottr to finish writing, the T3 project list from SQLite (ordering, archived/deleted and missing-folder filtering), the picker list (default project first, parent folder on duplicate titles), what Esc, Cmd/Ctrl, Tab, Enter and app switches do, panel and prompt sizing, the scroll fade, running the dispatch command, and for the paste into T3: which app a capture was taken in, finding T3's composer in its accessibility tree, and the capture as PNG. `scripts/coverage.sh` requires every line here to be covered.
+Core also holds the iPhone receiver: HTTP and multipart parsing, the `/projects` and `/shot` routes, the `@project` prefix, and the loopback listener (tested over real sockets).
 - `Sources/ShotPrompt/main.swift`: the AppKit shell, excluded from the threshold. It holds the panel and view subclasses, the window setup and teardown in `Controller`, the key monitor, timers, notification observers, the Accessibility calls and Cmd+V for the paste into T3, and the run loop. Each of these needs a window server and real AppKit events, so it calls into Core for every decision and only applies the result to windows and views.
 
 CI (`.github/workflows/tests.yml`) runs `scripts/coverage.sh` and a release build of the app on every pull request.
