@@ -32,8 +32,8 @@ Routes:
 ## iPhone: install the shortcut
 
 1. Get Tailscale on the iPhone and turn on VPN On Demand, so the shortcut reaches the Mac without opening Tailscale first.
-2. Open `ShotPrompt.shortcut` on the iPhone (AirDrop, Taildrop, Files or a chat). When asked, paste the receiver URL (`https://<your-mac>.<tailnet>.ts.net:8444`) and the token.
-3. Shortcuts → Automation → New Automation → **When a screenshot is captured** (iOS 27) → Run Shortcut → ShotPrompt. Turn **Confirm Before Run** off.
+2. Open `ShotPrompt.shortcut` on the iPhone (AirDrop, a chat, or a tailnet URL in Safari; a Taildrop file in Files asks for Face ID first). When asked, paste the receiver URL (`https://<your-mac>.<tailnet>.ts.net:8444`) and the token.
+3. Shortcuts → Automation → New Automation → the screenshot trigger (iOS 27.2 words it "When I save a screenshot to Photos, Files or Clipboard") → Run ShotPrompt. Keep **Automation** on; leave **Notify** off.
 
 Every screenshot now asks for a prompt. Cancel skips it.
 
