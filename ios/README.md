@@ -6,7 +6,7 @@ Take a screenshot on the iPhone, type a prompt, and a new T3 Code thread opens o
 iPhone screenshot → Shortcuts automation → Ask for Input → POST /shot (tailnet) → ShotPrompt.app → $SHOT_PROMPT_DISPATCH → T3 thread
 ```
 
-Start the prompt with `@project` to send the thread to that T3 project, for example `@shot-prompt why is this icon blurry?`. Case does not matter, and a title T3 shows twice matches the most recently used one. Without it, the thread goes to `$SHOT_PROMPT_CWD`.
+Start the prompt with `@project` to send the thread to that T3 project, for example `@shot-prompt why is this icon blurry?`. Case does not matter and names may have spaces. A title T3 shows twice matches the first one in the picker: the default project, then the most recently used. Without it, the thread goes to `$SHOT_PROMPT_CWD`.
 
 ## Mac: turn on the receiver
 

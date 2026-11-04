@@ -260,17 +260,27 @@ public func parseShot(body: Data, contentType: String) -> Shot? {
 }
 
 // "@name rest of prompt" sends the thread to the project called name (any
-// case; "ovou-platform" also matches "ovou-platform · ovou"). The first match
-// in picker order wins, so the most recently used one. Nil when the prompt has
-// no such prefix; an @word that names no project stays part of the prompt.
+// case; spaces allowed; "ovou-platform" also matches "ovou-platform · ovou").
+// The longest matching name wins; between equal names, picker order (the
+// default project, then most recently used). Nil when the prompt has no such
+// prefix; an @word that names no project stays part of the prompt.
 public func projectPrefix(_ prompt: String, entries: [PickerEntry]) -> (PickerEntry, String)? {
     let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.hasPrefix("@") else { return nil }
-    let word = trimmed.dropFirst().prefix { !$0.isWhitespace }.lowercased()
-    let short = { (name: String) in name.components(separatedBy: " · ")[0].lowercased() }
-    guard !word.isEmpty, let entry = entries.first(where: { $0.name.lowercased() == word || short($0.name) == word })
-    else { return nil }
-    return (entry, String(trimmed.dropFirst(word.count + 1)))
+    let rest = String(trimmed.dropFirst())
+    let lower = rest.lowercased()
+    var best: (entry: PickerEntry, length: Int)?
+    for entry in entries {
+        for name in Set([entry.name, entry.name.components(separatedBy: " · ")[0]]) {
+            let key = name.lowercased()
+            guard !key.isEmpty, lower.hasPrefix(key), key.count > best?.length ?? 0 else { continue }
+            // The name must end at a space or the end of the prompt, so @app never matches "@apple".
+            let after = lower.dropFirst(key.count).first
+            if after == nil || after!.isWhitespace { best = (entry, key.count) }
+        }
+    }
+    guard let best else { return nil }
+    return (best.entry, String(rest.dropFirst(best.length)))
 }
 
 // Writes phone images to `dir` as PHONE-<time>.<ext>; the name never matches

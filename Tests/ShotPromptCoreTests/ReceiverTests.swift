@@ -229,8 +229,19 @@ final class ReceiverShotTests: XCTestCase {
         let vault = projectPrefix("  @vault26 why is this red?", entries: entries)
         XCTAssertEqual(vault?.0.root, "/v")
         XCTAssertEqual(vault?.1, " why is this red?")
-        // A shared title matches its first (most recent) project.
+        // A shared title matches its first project in picker order.
         XCTAssertEqual(projectPrefix("@OVOU-platform fix", entries: entries)?.0.root, "/a/ovou/ovou-platform")
+        XCTAssertEqual(projectPrefix("@ovou-platform · coding fix", entries: entries)?.0.root,
+                       "/a/Coding/ovou-platform")
+        XCTAssertNil(projectPrefix("@vault2 x", entries: entries))
+        XCTAssertNil(projectPrefix("@vault26x", entries: entries))
+        let spaced = pickerEntries(projects: [Project(title: "My", root: "/m"),
+                                              Project(title: "My Project", root: "/mp"),
+                                              Project(title: "", root: "/e")], defaultRoot: "/m")
+        let picked = projectPrefix("@my project fix it", entries: spaced)
+        XCTAssertEqual(picked?.0.root, "/mp")
+        XCTAssertEqual(picked?.1, " fix it")
+        XCTAssertEqual(projectPrefix("@My", entries: spaced)?.1, "")
     }
 
     func testHandleJSONWithPrefix() throws {
