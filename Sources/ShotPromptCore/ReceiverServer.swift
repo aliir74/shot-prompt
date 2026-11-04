@@ -40,25 +40,37 @@ public final class ReceiverServer {
 
     func read(_ connection: NWConnection, _ buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, isComplete, error in
-            let buffer = buffer + (data ?? Data())
-            switch parseRequest(buffer, maxBody: maxBody) {
-            case .done(let request):
+            switch readStep(buffer: buffer, data: data, closed: isComplete || error != nil, maxBody: maxBody) {
+            case .handle(let request):
                 // Dispatch can take seconds; keep the listener queue free.
                 DispatchQueue.global().async { self.reply(connection, self.handler(request)) }
-            case .bad: reply(connection, HTTPResponse(status: 400, text: "bad request"))
-            case .tooLarge: reply(connection, HTTPResponse(status: 413, text: "image too large"))
-            case .incomplete:
-                if isComplete || error != nil {
-                    // The client stopped sending; a reply it cannot read just fails.
-                    reply(connection, HTTPResponse(status: 400, text: "incomplete request"))
-                } else {
-                    read(connection, buffer)
-                }
+            case .respond(let response): reply(connection, response)
+            case .readMore(let buffer): read(connection, buffer)
             }
         }
     }
 
     func reply(_ connection: NWConnection, _ response: HTTPResponse) {
         connection.send(content: response.serialized(), completion: .contentProcessed { _ in connection.cancel() })
+    }
+}
+
+public enum ReadStep: Equatable {
+    case handle(HTTPRequest)
+    case respond(HTTPResponse)
+    case readMore(Data)
+}
+
+// What to do after a read: `data` is what just arrived (nil at end of stream),
+// `closed` says the client stopped sending or the connection failed.
+public func readStep(buffer: Data, data: Data?, closed: Bool, maxBody: Int) -> ReadStep {
+    let buffer = buffer + (data ?? Data())
+    switch parseRequest(buffer, maxBody: maxBody) {
+    case .done(let request): return .handle(request)
+    case .bad: return .respond(HTTPResponse(status: 400, text: "bad request"))
+    case .tooLarge: return .respond(HTTPResponse(status: 413, text: "image too large"))
+    case .incomplete:
+        // A reply the client cannot read just fails.
+        return closed ? .respond(HTTPResponse(status: 400, text: "incomplete request")) : .readMore(buffer)
     }
 }

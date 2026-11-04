@@ -28,10 +28,14 @@ final class ReceiverServerTests: XCTestCase {
             }
         }
         conn.start(queue: .global())
-        for (i, chunk) in chunks.enumerated() {
-            let last = i == chunks.count - 1
-            conn.send(content: chunk, contentContext: last && closeAfterSend ? .finalMessage : .defaultMessage,
-                      isComplete: true, completion: .contentProcessed { _ in })
+        // Later chunks go 0.3 s apart, so the server reads them separately.
+        var parts: [(Data, NWConnection.ContentContext)] = chunks.map { ($0, .defaultMessage) }
+        if closeAfterSend { parts.append((Data(), .finalMessage)) }
+        for (i, part) in parts.enumerated() {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.3 * Double(i)) {
+                conn.send(content: part.0.isEmpty ? nil : part.0, contentContext: part.1, isComplete: true,
+                          completion: .contentProcessed { _ in })
+            }
         }
         receive()
         wait(for: [done], timeout: 5)
@@ -61,6 +65,15 @@ final class ReceiverServerTests: XCTestCase {
         _ = try startServer(port: port) { _ in HTTPResponse(status: 200, text: "") }
         XCTAssertTrue(exchange(port: port, [Data("GET / HTTP/1.1\r\n".utf8)], closeAfterSend: true)
             .hasSuffix("incomplete request"))
+    }
+
+    func testReadStep() {
+        XCTAssertEqual(readStep(buffer: Data("GET / HT".utf8), data: nil, closed: false, maxBody: 10),
+                       .readMore(Data("GET / HT".utf8)))
+        XCTAssertEqual(readStep(buffer: Data(), data: Data("GET / HT".utf8), closed: true, maxBody: 10),
+                       .respond(HTTPResponse(status: 400, text: "incomplete request")))
+        XCTAssertEqual(readStep(buffer: Data("GET / HTTP/1.1\r\n".utf8), data: Data("\r\n".utf8), closed: false,
+                                maxBody: 10), .handle(HTTPRequest(method: "GET", path: "/")))
     }
 
     func testPortInUseFails() throws {
