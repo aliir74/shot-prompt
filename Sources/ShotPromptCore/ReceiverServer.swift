@@ -67,10 +67,10 @@ public func readStep(buffer: Data, data: Data?, closed: Bool, maxBody: Int) -> R
     let buffer = buffer + (data ?? Data())
     switch parseRequest(buffer, maxBody: maxBody) {
     case .done(let request): return .handle(request)
-    case .bad: return .respond(HTTPResponse(status: 400, text: "bad request"))
-    case .tooLarge: return .respond(HTTPResponse(status: 413, text: "image too large"))
+    case .bad: return .respond(HTTPResponse(status: 400, message: "bad request"))
+    case .tooLarge: return .respond(HTTPResponse(status: 413, message: "image too large"))
     case .incomplete:
         // A reply the client cannot read just fails.
-        return closed ? .respond(HTTPResponse(status: 400, text: "incomplete request")) : .readMore(buffer)
+        return closed ? .respond(HTTPResponse(status: 400, message: "incomplete request")) : .readMore(buffer)
     }
 }

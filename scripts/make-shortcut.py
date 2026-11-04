@@ -3,7 +3,9 @@
 
 The shortcut: Take or Get Latest Screenshot -> Ask for Input (the prompt) ->
 Base64 Encode -> POST JSON {prompt, image} to <receiver>/shot with the bearer
-token -> Show Notification with the reply.
+token -> if the reply has an appLink, an "Open in T3?" alert whose OK opens the
+new thread in the T3 iOS app (t3code://threads/...); otherwise a notification
+with the error. (A Shortcuts notification cannot open anything when tapped.)
 
 The receiver URL and token are Text actions with import questions, so the
 iPhone asks for them when the file is imported; --url and --token only fill
@@ -56,14 +58,15 @@ def action(identifier, **params):
 
 
 def build(url, token, capture):
-    ids = {k: str(uuid.uuid4()).upper() for k in ("url", "token", "shot", "prompt", "b64", "post")}
+    ids = {k: str(uuid.uuid4()).upper()
+           for k in ("url", "token", "shot", "prompt", "b64", "post", "message", "link", "group")}
     shot_name = "Screenshot" if capture == "take" else "Latest Screenshots"
     actions = [
         action("gettext", UUID=ids["url"], WFTextActionText=url),
         action("gettext", UUID=ids["token"], WFTextActionText=token),
         action("takescreenshot" if capture == "take" else "getlastscreenshot", UUID=ids["shot"]),
         action("ask", UUID=ids["prompt"], WFInputType="Text",
-               WFAskActionPrompt="Prompt for T3 (start with @project to pick one)"),
+               WFAskActionPrompt="Ask T3 about this screenshot\nStart with @project to pick a project"),
         action("base64encode", UUID=ids["b64"], WFInput=attachment(ids["shot"], shot_name),
                WFEncodeMode="Encode", WFBase64LineBreakMode="None"),
         action("downloadurl", UUID=ids["post"], ShowHeaders=True,
@@ -72,8 +75,21 @@ def build(url, token, capture):
                WFHTTPHeaders=dictionary([("Authorization", text("Bearer ", (ids["token"], "Text")))]),
                WFJSONValues=dictionary([("prompt", text((ids["prompt"], "Provided Input"))),
                                         ("image", text((ids["b64"], "Base64 Encoded")))])),
-        action("notification", WFNotificationActionTitle="ShotPrompt",
-               WFNotificationActionBody=text((ids["post"], "Contents of URL"))),
+        action("getvalueforkey", UUID=ids["message"], WFInput=attachment(ids["post"], "Contents of URL"),
+               WFGetDictionaryValueType="Value", WFDictionaryKey="message"),
+        action("getvalueforkey", UUID=ids["link"], WFInput=attachment(ids["post"], "Contents of URL"),
+               WFGetDictionaryValueType="Value", WFDictionaryKey="appLink"),
+        # If appLink has any value (condition 100): offer to open the thread.
+        action("conditional", GroupingIdentifier=ids["group"], WFControlFlowMode=0, WFCondition=100,
+               WFInput={"Type": "Variable", "Variable": attachment(ids["link"], "Dictionary Value")}),
+        action("alert", WFAlertActionTitle="Open in T3?",
+               WFAlertActionMessage=text((ids["message"], "Dictionary Value")),
+               WFAlertActionCancelButtonShown=True),
+        action("openurl", WFInput=text((ids["link"], "Dictionary Value"))),
+        action("conditional", GroupingIdentifier=ids["group"], WFControlFlowMode=1),
+        action("notification", WFNotificationActionTitle="T3",
+               WFNotificationActionBody=text((ids["message"], "Dictionary Value"))),
+        action("conditional", GroupingIdentifier=ids["group"], WFControlFlowMode=2),
     ]
     question = lambda index, prompt, default: {
         "ActionIndex": index, "Category": "Parameter", "Parameter": "WFTextActionText",
@@ -84,7 +100,7 @@ def build(url, token, capture):
         "WFWorkflowClientVersion": "2607.0.2",
         "WFWorkflowMinimumClientVersion": 900,
         "WFWorkflowMinimumClientVersionString": "900",
-        "WFWorkflowIcon": {"WFWorkflowIconStartColor": 463140863, "WFWorkflowIconGlyphNumber": 59511},
+        "WFWorkflowIcon": {"WFWorkflowIconStartColor": 255, "WFWorkflowIconGlyphNumber": 59511},
         "WFWorkflowImportQuestions": [
             question(0, "Receiver URL: https://<your Mac>.<tailnet>.ts.net:8444 (no trailing slash)", url),
             question(1, "Receiver token: defaults read io.github.aliir74.shot-prompt receiverToken", token),

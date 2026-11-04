@@ -86,6 +86,15 @@ public struct HTTPResponse: Equatable {
         body = Data(text.utf8)
     }
 
+    // `{"ok": <2xx>, "message": ..., plus extra string fields}`: what the shortcut
+    // reads (its Get Dictionary Value actions take "message" and "appLink").
+    public init(status: Int, message: String, extra: [String: String] = [:]) {
+        var object: [String: Any] = extra
+        object["ok"] = (200..<300).contains(status)
+        object["message"] = message
+        self.init(status: status, json: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]))
+    }
+
     public init(status: Int, json: Data) {
         self.status = status
         contentType = "application/json"
@@ -199,41 +208,56 @@ public struct ReceiverContext {
 
 public func handle(_ request: HTTPRequest, _ ctx: ReceiverContext) -> HTTPResponse {
     let routes = ["/projects": "GET", "/shot": "POST"]
-    guard let method = routes[request.path] else { return HTTPResponse(status: 404, text: "not found") }
+    guard let method = routes[request.path] else { return HTTPResponse(status: 404, message: "not found") }
     guard constantTimeEqual(request.headers["authorization"] ?? "", "Bearer \(ctx.token)") else {
-        return HTTPResponse(status: 401, text: "wrong or missing token")
+        return HTTPResponse(status: 401, message: "wrong or missing token")
     }
-    guard request.method == method else { return HTTPResponse(status: 405, text: "use \(method)") }
+    guard request.method == method else { return HTTPResponse(status: 405, message: "use \(method)") }
     let entries = pickerEntries(projects: ctx.projects(), defaultRoot: ctx.defaultRoot)
     if request.path == "/projects" {
         // A JSON array of names: Shortcuts' Choose from List takes it as is.
         return HTTPResponse(status: 200, json: try! JSONEncoder().encode(entries.map(\.name)))
     }
     guard let shot = parseShot(body: request.body, contentType: request.headers["content-type"] ?? "") else {
-        return HTTPResponse(status: 400, text: "send JSON (prompt, image as base64, project) or a multipart form")
+        return HTTPResponse(status: 400, message: "send JSON (prompt, image as base64, project) or a multipart form")
     }
-    guard let image = shot.image, !image.isEmpty else { return HTTPResponse(status: 400, text: "no image") }
+    guard let image = shot.image, !image.isEmpty else { return HTTPResponse(status: 400, message: "no image") }
     guard let ext = imageExtension(image) else {
-        return HTTPResponse(status: 415, text: "T3 takes PNG, JPEG, GIF or WebP images")
+        return HTTPResponse(status: 415, message: "T3 takes PNG, JPEG, GIF or WebP images")
     }
     let wanted = shot.project.trimmingCharacters(in: .whitespacesAndNewlines)
     var entry = entries[0], text = shot.prompt
     if !wanted.isEmpty {
         guard let named = entries.first(where: { $0.name == wanted }) else {
-            return HTTPResponse(status: 400, text: "unknown project: \(wanted)")
+            return HTTPResponse(status: 400, message: "unknown project: \(wanted)")
         }
         entry = named
     } else if let picked = projectPrefix(shot.prompt, entries: entries) {
         (entry, text) = picked
     }
-    guard let prompt = sendablePrompt(text) else { return HTTPResponse(status: 400, text: "empty prompt") }
+    guard let prompt = sendablePrompt(text) else { return HTTPResponse(status: 400, message: "empty prompt") }
     let file: URL
     do { file = try ctx.saveImage(image, ext) } catch {
-        return HTTPResponse(status: 502, text: "could not save the image: \(error.localizedDescription)")
+        return HTTPResponse(status: 502, message: "could not save the image: \(error.localizedDescription)")
     }
     let (ok, output) = ctx.dispatch(prompt, file, entry.root)
-    return ok ? HTTPResponse(status: 200, text: "Started a T3 thread in \(entry.name).")
-              : HTTPResponse(status: 502, text: "dispatch failed: \(output)")
+    guard ok else { return HTTPResponse(status: 502, message: "dispatch failed: \(output)") }
+    var extra = ["project": entry.name]
+    if let links = threadLinks(output) { extra["threadUrl"] = links.web; extra["appLink"] = links.app }
+    return HTTPResponse(status: 200, message: "Started a T3 thread in \(entry.name).", extra: extra)
+}
+
+// The thread's links from the dispatch output, whose last line is the thread URL
+// `<origin>/<environmentId>/<threadId>`: that URL, and the T3 iOS app's
+// `t3code://threads/<environmentId>/<threadId>`. Nil when the output has no such URL.
+public func threadLinks(_ output: String) -> (web: String, app: String)? {
+    guard let last = output.split(whereSeparator: \.isNewline).last,
+          let url = URL(string: String(last).trimmingCharacters(in: .whitespaces)),
+          let scheme = url.scheme, scheme.hasPrefix("http"), url.host != nil
+    else { return nil }
+    let parts = url.path.split(separator: "/")
+    guard parts.count == 2 else { return nil }
+    return (url.absoluteString, "t3code://threads/\(parts[0])/\(parts[1])")
 }
 
 // What a /shot body carries.

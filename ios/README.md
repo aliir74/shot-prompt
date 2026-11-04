@@ -27,7 +27,7 @@ curl -H "Authorization: Bearer $(defaults read io.github.aliir74.shot-prompt rec
 Routes:
 
 - `GET /projects`: a JSON array of the picker's project names.
-- `POST /shot`: JSON `{"prompt": "...", "image": "<base64 PNG/JPEG/GIF/WebP>", "project": "<optional name>"}`, or a multipart form with the same fields (`image` as a file). Replies in plain text: `Started a T3 thread in <project>.` or the error. An explicit `project` wins over an `@project` prefix.
+- `POST /shot`: JSON `{"prompt": "...", "image": "<base64 PNG/JPEG/GIF/WebP>", "project": "<optional name>"}`, or a multipart form with the same fields (`image` as a file). Replies with JSON: `{"ok": true, "message": "Started a T3 thread in <project>.", "project": ..., "threadUrl": ..., "appLink": "t3code://threads/<environment>/<thread>"}`, or `{"ok": false, "message": "<error>"}`. An explicit `project` wins over an `@project` prefix.
 
 ## iPhone: install the shortcut
 
@@ -35,7 +35,9 @@ Routes:
 2. Open `ShotPrompt.shortcut` on the iPhone (AirDrop, a chat, or a tailnet URL in Safari; a Taildrop file in Files asks for Face ID first). When asked, paste the receiver URL (`https://<your-mac>.<tailnet>.ts.net:8444`) and the token.
 3. Shortcuts → Automation → New Automation → the screenshot trigger (iOS 27.2 words it "When I save a screenshot to Photos, Files or Clipboard") → Run ShotPrompt. Keep **Automation** on; leave **Notify** off.
 
-Every screenshot now asks for a prompt. Cancel skips it.
+Every screenshot now asks for a prompt; Cancel skips it. After sending, an **Open in T3?** alert names the project: OK opens the new thread in the T3 Code app (`t3code://threads/<environment>/<thread>`), Cancel stays where you are. The first run asks to allow sending the photo to your Mac and opening T3 Code: choose Always Allow / Allow.
+
+iOS runs the automation only once the screenshot is saved, which is when the corner thumbnail goes away (about 3 seconds). Swipe the thumbnail off the screen to save it, and get the prompt, at once.
 
 Before iOS 27, or to send only when you choose: install `ShotPrompt-BackTap.shortcut` instead. It takes the screenshot itself, so put it on Settings → Accessibility → Touch → Back Tap, or on the Action button.
 

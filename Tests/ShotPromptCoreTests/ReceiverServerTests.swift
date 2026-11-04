@@ -64,14 +64,14 @@ final class ReceiverServerTests: XCTestCase {
         let port = freePort()
         _ = try startServer(port: port) { _ in HTTPResponse(status: 200, text: "") }
         XCTAssertTrue(exchange(port: port, [Data("GET / HTTP/1.1\r\n".utf8)], closeAfterSend: true)
-            .hasSuffix("incomplete request"))
+            .contains("incomplete request"))
     }
 
     func testReadStep() {
         XCTAssertEqual(readStep(buffer: Data("GET / HT".utf8), data: nil, closed: false, maxBody: 10),
                        .readMore(Data("GET / HT".utf8)))
         XCTAssertEqual(readStep(buffer: Data(), data: Data("GET / HT".utf8), closed: true, maxBody: 10),
-                       .respond(HTTPResponse(status: 400, text: "incomplete request")))
+                       .respond(HTTPResponse(status: 400, message: "incomplete request")))
         XCTAssertEqual(readStep(buffer: Data("GET / HTTP/1.1\r\n".utf8), data: Data("\r\n".utf8), closed: false,
                                 maxBody: 10), .handle(HTTPRequest(method: "GET", path: "/")))
     }

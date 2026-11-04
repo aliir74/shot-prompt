@@ -137,7 +137,14 @@ final class ReceiverHandleTests: XCTestCase {
         return HTTPRequest(method: method, path: path, headers: headers, body: body)
     }
 
-    func text(_ r: HTTPResponse) -> String { String(decoding: r.body, as: UTF8.self) }
+    func text(_ r: HTTPResponse) -> String {
+        let object = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any]
+        return object?["message"] as? String ?? ""
+    }
+
+    func json(_ r: HTTPResponse) -> [String: AnyHashable] {
+        (try? JSONSerialization.jsonObject(with: r.body) as? [String: AnyHashable]) ?? [:]
+    }
 
     func testRoutingAndAuth() {
         XCTAssertEqual(handle(request("GET", "/nope"), context()).status, 404)
@@ -157,6 +164,7 @@ final class ReceiverHandleTests: XCTestCase {
         let r = handle(request(body: form([("prompt", nil, Data(" why? ".utf8)), ("image", "a.png", png)])), context())
         XCTAssertEqual(r.status, 200)
         XCTAssertEqual(text(r), "Started a T3 thread in shot-prompt.")
+        XCTAssertEqual(json(r), ["ok": true, "message": "Started a T3 thread in shot-prompt.", "project": "shot-prompt"])
         XCTAssertEqual(dispatched.map(\.0), ["why?"])
         XCTAssertEqual(dispatched.map(\.1.path), ["/tmp/img.png"])
         XCTAssertEqual(dispatched.map(\.2), ["/s"])
@@ -185,6 +193,24 @@ final class ReceiverHandleTests: XCTestCase {
         XCTAssertTrue(dispatched.isEmpty)
     }
 
+    func testShotLinks() {
+        dispatchResult = (true, "launched\nhttp://127.0.0.1:3773/env-1/thread-1\n")
+        let body = form([("prompt", nil, Data("p".utf8)), ("image", "a.png", png)])
+        let r = handle(request(body: body), context())
+        XCTAssertEqual(json(r)["appLink"], "t3code://threads/env-1/thread-1")
+        XCTAssertEqual(json(r)["threadUrl"], "http://127.0.0.1:3773/env-1/thread-1")
+        XCTAssertEqual(json(r)["ok"], true)
+    }
+
+    func testThreadLinks() {
+        XCTAssertNil(threadLinks(""))
+        XCTAssertNil(threadLinks("no url here"))
+        XCTAssertNil(threadLinks("ftp://h/e/t"))
+        XCTAssertNil(threadLinks("http:///e/t"))
+        XCTAssertNil(threadLinks("http://h/only-one"))
+        XCTAssertEqual(threadLinks(" https://h:1/e/t ")?.app, "t3code://threads/e/t")
+    }
+
     func testShotFailures() {
         let body = form([("prompt", nil, Data("p".utf8)), ("image", "a.png", png)])
         saveError = CocoaError(.fileWriteNoPermission)
@@ -194,6 +220,7 @@ final class ReceiverHandleTests: XCTestCase {
         let r = handle(request(body: body), context())
         XCTAssertEqual(r.status, 502)
         XCTAssertEqual(text(r), "dispatch failed: T3 is not running")
+        XCTAssertEqual(json(r)["ok"], false)
     }
 }
 
