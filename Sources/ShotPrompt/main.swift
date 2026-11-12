@@ -16,7 +16,8 @@
 // prompt open while you talk and a little after. The project
 // picker in the panel (Tab, or click it) sends the thread to another T3 project.
 // With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
-// that and lands in the chat open there, as if you pressed Cmd+V in it.
+// that and lands in the chat open there, as if you pressed Cmd+V in it,
+// on a new line when text comes before the caret.
 
 // This file is the AppKit shell: windows, views, event monitors, timers and
 // observers. Every decision it acts on lives in ShotPromptCore, which has the tests.
@@ -179,7 +180,8 @@ final class Controller: NSObject, NSTextViewDelegate {
 
     // Pastes the capture into the chat open in T3: the image goes on the
     // clipboard, T3's composer takes the focus (also away from a selection in
-    // the chat or in an HTML render), then Cmd+V goes to T3. Driving another
+    // the chat or in an HTML render), Shift+Enter starts a new line after any
+// text, then Cmd+V goes to T3. Driving another
     // app needs the Accessibility permission. Without it, or when T3 shows no
     // chat, the icon shows as usual, so the capture is never lost.
     private func paste(_ url: URL, into app: NSRunningApplication) {
@@ -205,10 +207,14 @@ final class Controller: NSObject, NSTextViewDelegate {
                 // The focus reaches T3's page a moment after it is set. The
                 // clipboard is set right before Cmd+V, so each paste sends its own image.
                 DispatchQueue.main.asyncAfter(deadline: .now() + pastePollSeconds) {
+                    if breaksLineBeforePaste(text: Self.axValue(composer, kAXValueAttribute) as? String,
+                                             caret: Self.caret(in: composer)) {
+                        Self.key(kVK_Return, flags: .maskShift, to: app)
+                    }
                     let pb = NSPasteboard.general
                     pb.clearContents()
                     pb.setData(png, forType: .png)
-                    Self.commandV(to: app)
+                    Self.key(kVK_ANSI_V, flags: .maskCommand, to: app)
                 }
                 return
             }
@@ -242,12 +248,20 @@ final class Controller: NSObject, NSTextViewDelegate {
             isFocused: { axValue($0, kAXFocusedAttribute) as? Bool == true })
     }
 
-    // Cmd+V, posted to T3 itself so it cannot land in another app.
-    private static func commandV(to app: NSRunningApplication) {
+    // Where the caret sits in the composer, or nil when T3 does not say.
+    private static func caret(in composer: AXUIElement) -> Int? {
+        guard let value = axValue(composer, kAXSelectedTextRangeAttribute),
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        return AXValueGetValue(value as! AXValue, .cfRange, &range) ? range.location : nil
+    }
+
+    // A key press (Shift+Enter, Cmd+V), posted to T3 itself so it cannot land in another app.
+    private static func key(_ code: Int, flags: CGEventFlags, to app: NSRunningApplication) {
         let source = CGEventSource(stateID: .combinedSessionState)
         for down in [true, false] {
-            let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: down)
-            event?.flags = .maskCommand
+            let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down)
+            event?.flags = flags
             event?.postToPid(app.processIdentifier)
         }
     }
