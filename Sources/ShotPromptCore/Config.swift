@@ -32,5 +32,7 @@ public let idleSeconds: TimeInterval = 5
 public let iconSeconds: TimeInterval = 20
 // After you switch to another app, the icon leaves this soon.
 public let iconAwaySeconds: TimeInterval = 3
+// After Fn comes up, dictation has this long to type into the empty prompt.
+public let dictationGraceSeconds: TimeInterval = 10
 // The prompt grows up to this many lines, then scrolls.
 public let maxPromptLines: Double = 6

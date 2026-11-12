@@ -6,7 +6,7 @@
 	<key>CFBundleName</key><string>ShotPrompt</string>
 	<key>CFBundleExecutable</key><string>ShotPrompt</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>0.2.0</string>
+	<key>CFBundleShortVersionString</key><string>0.3.0</string>
 	<key>LSUIElement</key><true/>
 </dict>
 </plist>
