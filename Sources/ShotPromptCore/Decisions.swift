@@ -30,16 +30,63 @@ public enum KeyAction: Equatable {
     case expandAndType
 }
 
-// Esc, or Cmd/Ctrl (Cmd+V into another app) before any typing, means the
+// Esc closes. On the icon, Cmd/Ctrl (Cmd+V into another app) means the
 // capture was meant for something else: get out of the way. Any other key on
-// the icon opens the prompt and becomes its first character. Keys for other
-// windows, or while the picker menu is open, pass.
-public func keyAction(isOurs: Bool, isEscape: Bool, commandOrControl: Bool,
-                      hasText: Bool, onIcon: Bool) -> KeyAction {
+// the icon opens the prompt and becomes its first character. In the open
+// panel, Cmd/Ctrl shortcuts edit the prompt (Cmd+V, Cmd+A), even before any
+// typing. Keys for other windows, or while the picker menu is open, pass.
+public func keyAction(isOurs: Bool, isEscape: Bool, commandOrControl: Bool, onIcon: Bool) -> KeyAction {
     guard isOurs else { return .pass }
     if isEscape { return .dismiss }
-    if commandOrControl && !hasText { return .dismiss }
-    return onIcon ? .expandAndType : .pass
+    guard onIcon else { return .pass }
+    return commandOrControl ? .dismiss : .expandAndType
+}
+
+// The standard edit shortcuts. This app has no menu bar, which is what maps
+// them to actions in other apps, so the panel maps them itself. A non-Latin
+// layout (Persian) can report its own letter, so the key's position decides then.
+public func editCommand(characters: String?, keyCode: UInt16, command: Bool, shift: Bool,
+                        option: Bool, control: Bool) -> String? {
+    guard command, !option, !control else { return nil }
+    let positions: [UInt16: String] = [0: "a", 8: "c", 9: "v", 7: "x", 6: "z"]
+    var key = characters?.lowercased() ?? ""
+    if !(key.count == 1 && key.first!.isASCII && key.first!.isLetter) { key = positions[keyCode] ?? "" }
+    switch (key, shift) {
+    case ("a", false): return "selectAll:"
+    case ("c", false): return "copy:"
+    case ("v", false): return "paste:"
+    case ("x", false): return "cut:"
+    case ("z", false): return "undo:"
+    case ("z", true): return "redo:"
+    default: return nil
+    }
+}
+
+// The Fn (globe) key, which dictation apps such as Wispr Flow hold while you talk.
+public let fnKeyCode: UInt16 = 63
+
+public enum FnAction: Equatable {
+    case none
+    // Fn went down: hold the panel open while you talk.
+    case hold
+    // Fn went down on the icon: open the prompt for the words to land in, and hold it.
+    case expandAndHold
+    // Fn came up: the words arrive a moment later, so hold a while longer.
+    case release
+}
+
+public func fnAction(keyCode: UInt16, fnDown: Bool, onIcon: Bool) -> FnAction {
+    guard keyCode == fnKeyCode else { return .none }
+    guard fnDown else { return .release }
+    return onIcon ? .expandAndHold : .hold
+}
+
+// While Fn is held, and for a grace period after it comes up, an empty
+// prompt is waiting for dictation, so nothing closes it.
+public func dictationHolds(fnHeld: Bool, releasedAt: Date?, now: Date) -> Bool {
+    if fnHeld { return true }
+    guard let r = releasedAt else { return false }
+    return now.timeIntervalSince(r) < dictationGraceSeconds
 }
 
 public enum ActivationAction: Equatable {
@@ -53,13 +100,13 @@ public enum ActivationAction: Equatable {
 }
 
 // Switching apps before typing means the capture was not for Claude, so an
-// empty prompt closes and the icon leaves soon after. This app coming forward
+// empty prompt closes and the icon leaves soon after, unless you are dictating. This app coming forward
 // for the picker, the picker handing the front back, and Shottr coming forward
 // around a capture are not switches.
 public func activationAction(activatedPID: Int32?, activatedBundleID: String?, ownPID: Int32,
                              returnToPID: Int32?, panelOpen: Bool, iconOpen: Bool,
-                             iconTimeLeft: TimeInterval) -> ActivationAction {
-    if activatedPID == ownPID { return .none }
+                             iconTimeLeft: TimeInterval, dictating: Bool = false) -> ActivationAction {
+    if activatedPID == ownPID || dictating { return .none }
     if let r = returnToPID, activatedPID == r { return .clearReturn }
     if panelOpen { return .dismissIfEmpty }
     guard iconOpen, activatedBundleID != shottrBundleID, iconTimeLeft > iconAwaySeconds else { return .none }

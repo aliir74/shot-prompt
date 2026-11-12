@@ -10,7 +10,8 @@ Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), pr
 - The icon leaves 3 seconds after you switch to another app, so you can still click it on the way. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
 - The project picker at the bottom right says which T3 project gets the thread. It starts on `$SHOT_PROMPT_CWD`; Tab (or a click) opens the list of your T3 projects, pinned first, then most recently used. Arrow keys or type-to-select, then Enter, pick one.
 - Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> "<prompt>"`.
-- Before you type in the panel, Esc, switching to another app, a Cmd/Ctrl shortcut, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. If Shottr also copies captures, the first Cmd+V after a capture only closes the panel; press it again to paste.
+- Before you type in the panel, Esc, switching to another app, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. The usual edit shortcuts (Cmd+V, Cmd+A, Cmd+C, Cmd+X, Cmd+Z) work in the panel, empty or not. If Shottr also copies captures, the first Cmd+V while only the icon shows removes the icon; press it again to paste.
+- Dictation that holds Fn (Wispr Flow): pressing Fn on the icon opens the prompt, and an empty prompt stays open while Fn is down and for 10 seconds after, so the words have time to arrive.
 
 ## iPhone
 

@@ -13,24 +13,66 @@ final class DecisionTests: XCTestCase {
         XCTAssertEqual(captureAction(hasText: true, editable: false, pasteIntoT3: true), .ignore)
     }
 
-    func key(ours: Bool = true, esc: Bool = false, cmd: Bool = false, text: Bool = false, icon: Bool = false) -> KeyAction {
-        keyAction(isOurs: ours, isEscape: esc, commandOrControl: cmd, hasText: text, onIcon: icon)
+    func key(ours: Bool = true, esc: Bool = false, cmd: Bool = false, icon: Bool = false) -> KeyAction {
+        keyAction(isOurs: ours, isEscape: esc, commandOrControl: cmd, onIcon: icon)
     }
 
     func testKeyAction() {
         XCTAssertEqual(key(ours: false, esc: true), .pass, "other windows and an open menu keep their keys")
-        XCTAssertEqual(key(esc: true, text: true), .dismiss, "Esc always closes")
-        XCTAssertEqual(key(cmd: true), .dismiss, "Cmd+V into another app before typing")
-        XCTAssertEqual(key(cmd: true, icon: true), .dismiss)
-        XCTAssertEqual(key(cmd: true, text: true), .pass, "after typing, shortcuts edit the prompt")
+        XCTAssertEqual(key(esc: true), .dismiss, "Esc always closes")
+        XCTAssertEqual(key(esc: true, icon: true), .dismiss)
+        XCTAssertEqual(key(cmd: true, icon: true), .dismiss, "Cmd+V into another app")
+        XCTAssertEqual(key(cmd: true), .pass, "in the panel, shortcuts edit the prompt even when empty")
         XCTAssertEqual(key(icon: true), .expandAndType)
         XCTAssertEqual(key(), .pass, "plain keys in the panel type")
     }
 
+    func edit(_ chars: String?, _ code: UInt16 = 99, cmd: Bool = true, shift: Bool = false,
+              option: Bool = false, control: Bool = false) -> String? {
+        editCommand(characters: chars, keyCode: code, command: cmd, shift: shift, option: option, control: control)
+    }
+
+    func testEditCommand() {
+        XCTAssertEqual(edit("a"), "selectAll:")
+        XCTAssertEqual(edit("c"), "copy:")
+        XCTAssertEqual(edit("V"), "paste:")
+        XCTAssertEqual(edit("x"), "cut:")
+        XCTAssertEqual(edit("z"), "undo:")
+        XCTAssertEqual(edit("z", shift: true), "redo:")
+        XCTAssertNil(edit("a", shift: true))
+        XCTAssertNil(edit("q"))
+        XCTAssertNil(edit("v", cmd: false))
+        XCTAssertNil(edit("v", option: true))
+        XCTAssertNil(edit("v", control: true))
+        XCTAssertEqual(edit("ر", 9), "paste:", "Persian layout: the V key by position")
+        XCTAssertEqual(edit("ش", 0), "selectAll:")
+        XCTAssertEqual(edit(nil, 8), "copy:")
+        XCTAssertEqual(edit("ab", 7), "cut:")
+        XCTAssertEqual(edit("1", 6), "undo:")
+        XCTAssertNil(edit("ش", 99), "an unknown key")
+    }
+
+    func testFnAction() {
+        XCTAssertEqual(fnAction(keyCode: 56, fnDown: true, onIcon: true), .none, "Shift is not Fn")
+        XCTAssertEqual(fnAction(keyCode: fnKeyCode, fnDown: true, onIcon: false), .hold)
+        XCTAssertEqual(fnAction(keyCode: fnKeyCode, fnDown: true, onIcon: true), .expandAndHold)
+        XCTAssertEqual(fnAction(keyCode: fnKeyCode, fnDown: false, onIcon: false), .release)
+    }
+
+    func testDictationHolds() {
+        let now = Date()
+        XCTAssertTrue(dictationHolds(fnHeld: true, releasedAt: nil, now: now))
+        XCTAssertFalse(dictationHolds(fnHeld: false, releasedAt: nil, now: now))
+        XCTAssertTrue(dictationHolds(fnHeld: false, releasedAt: now.addingTimeInterval(-2), now: now),
+                      "the words arrive after Fn comes up")
+        XCTAssertFalse(dictationHolds(fnHeld: false, releasedAt: now.addingTimeInterval(-dictationGraceSeconds),
+                                      now: now))
+    }
+
     func act(pid: Int32? = 50, bundle: String? = "com.other", returnTo: Int32? = nil, panel: Bool = false,
-             icon: Bool = false, left: TimeInterval = 20) -> ActivationAction {
+             icon: Bool = false, left: TimeInterval = 20, dictating: Bool = false) -> ActivationAction {
         activationAction(activatedPID: pid, activatedBundleID: bundle, ownPID: 1, returnToPID: returnTo,
-                         panelOpen: panel, iconOpen: icon, iconTimeLeft: left)
+                         panelOpen: panel, iconOpen: icon, iconTimeLeft: left, dictating: dictating)
     }
 
     func testActivationAction() {
@@ -43,6 +85,8 @@ final class DecisionTests: XCTestCase {
         XCTAssertEqual(act(bundle: shottrBundleID, icon: true), .none, "Shottr around a capture")
         XCTAssertEqual(act(icon: true, left: iconAwaySeconds), .none, "already leaving soon enough")
         XCTAssertEqual(act(), .none, "nothing on screen")
+        XCTAssertEqual(act(panel: true, dictating: true), .none, "Wispr Flow coming forward while you talk")
+        XCTAssertEqual(act(icon: true, dictating: true), .none)
     }
 
     func testTextCommand() {
@@ -58,5 +102,6 @@ final class DecisionTests: XCTestCase {
         XCTAssertEqual(iconSeconds, 20)
         XCTAssertEqual(iconAwaySeconds, 3)
         XCTAssertEqual(maxPromptLines, 6)
+        XCTAssertEqual(dictationGraceSeconds, 10)
     }
 }

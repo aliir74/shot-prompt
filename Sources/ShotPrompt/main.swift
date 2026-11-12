@@ -9,8 +9,10 @@
 // app forward, so no Accessibility or Input Monitoring permission is needed.
 // Enter sends the prompt through `t3-dispatch --image`. The icon stays when you
 // switch apps and goes on Esc, a Cmd/Ctrl shortcut, or 20 seconds idle. While
-// the prompt is empty, Esc, a Cmd/Ctrl shortcut, switching apps, or 5 seconds
-// idle closes the panel; once you have typed, only Esc does. The project
+// the prompt is empty, Esc, switching apps, or 5 seconds idle closes the
+// panel; once you have typed, only Esc does. Cmd shortcuts in the panel edit
+// the prompt. Holding Fn (Wispr Flow dictation) opens the prompt from the icon
+// and keeps an empty prompt open while you talk and a little after. The project
 // picker in the panel (Tab, or click it) sends the thread to another T3 project.
 // With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
 // that and lands in the chat open there, as if you pressed Cmd+V in it.
@@ -27,6 +29,18 @@ let config = Config(environment: ProcessInfo.processInfo.environment,
 
 final class PromptPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    // Cmd+A, Cmd+V and the other edit shortcuts, which a menu bar would map.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let m = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if let name = editCommand(characters: event.charactersIgnoringModifiers, keyCode: event.keyCode,
+                                  command: m.contains(.command), shift: m.contains(.shift),
+                                  option: m.contains(.option), control: m.contains(.control)),
+           let responder = firstResponder, responder.tryToPerform(Selector(name), with: self) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 // The capture icon. It handles the click itself, so the click opens the
@@ -102,6 +116,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var image: URL?
     private var idleTimer: Timer?
     private var keyMonitor: Any?
+    private var fnMonitor: Any?
+    // Fn is down (dictation), or when it last came up.
+    private var fnHeld = false
+    private var fnReleasedAt: Date?
     private var activationObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
     // The last app to come forward that is neither Shottr nor this one: the
@@ -289,7 +307,7 @@ final class Controller: NSObject, NSTextViewDelegate {
             let ours = !self.menuOpen && w != nil && (w === self.panel || w === self.icon)
             switch keyAction(isOurs: ours, isEscape: event.keyCode == 53,
                              commandOrControl: !event.modifierFlags.intersection([.command, .control]).isEmpty,
-                             hasText: self.hasText, onIcon: w === self.icon) {
+                             onIcon: w === self.icon) {
             case .pass:
                 return event
             case .dismiss:
@@ -301,6 +319,22 @@ final class Controller: NSObject, NSTextViewDelegate {
                 return nil
             }
         }
+        fnMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self, !self.menuOpen else { return event }
+            switch fnAction(keyCode: event.keyCode, fnDown: event.modifierFlags.contains(.function),
+                            onIcon: self.icon != nil) {
+            case .none: break
+            case .expandAndHold:
+                self.expand()
+                self.fnHeld = true; self.fnReleasedAt = nil
+            case .hold:
+                self.fnHeld = true; self.fnReleasedAt = nil
+            case .release:
+                self.fnHeld = false; self.fnReleasedAt = Date()
+                if !self.hasText { self.armIdle(dictationGraceSeconds) }
+            }
+            return event
+        }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -311,7 +345,8 @@ final class Controller: NSObject, NSTextViewDelegate {
                 ownPID: ProcessInfo.processInfo.processIdentifier,
                 returnToPID: self.returnTo?.processIdentifier,
                 panelOpen: self.panel != nil, iconOpen: self.icon != nil,
-                iconTimeLeft: self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0) {
+                iconTimeLeft: self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0,
+                dictating: self.dictating) {
             case .none: break
             case .clearReturn: self.returnTo = nil
             case .dismissIfEmpty: self.dismissIfEmpty()
@@ -518,8 +553,18 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
     }
 
+    // The Fn flag is also read live, in case the dictation app keeps the
+    // Fn events from reaching this panel.
+    private var dictating: Bool {
+        dictationHolds(fnHeld: fnHeld || NSEvent.modifierFlags.contains(.function),
+                       releasedAt: fnReleasedAt, now: Date())
+    }
+
     private func dismissIfEmpty() {
-        if !hasText && !menuOpen { dismiss() }
+        if hasText || menuOpen { return }
+        // Still dictating: look again later instead of closing.
+        if dictating { return armIdle() }
+        dismiss()
     }
 
     func textDidChange(_ notification: Notification) {
@@ -617,6 +662,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         idleTimer?.invalidate()
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         keyMonitor = nil
+        if let m = fnMonitor { NSEvent.removeMonitor(m) }
+        fnMonitor = nil
+        fnHeld = false; fnReleasedAt = nil
         if let o = activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(o) }
         if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
         activationObserver = nil; resignObserver = nil
