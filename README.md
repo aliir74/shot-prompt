@@ -29,7 +29,7 @@ defaults write io.github.aliir74.shot-prompt pasteIntoT3 -bool false   # off
 It is read at every capture, so no restart is needed. How it works:
 
 - Shottr is in front during a capture, so the app the capture was taken in is the last other app that came forward.
-- The capture goes on the clipboard (as PNG), T3's chat composer takes the focus through the macOS Accessibility API, and Cmd+V goes to T3. Focusing the composer first matters: T3 drops a pasted image when the focus is elsewhere, for example after you select text in the chat or in an HTML render.
+- The capture goes on the clipboard (as PNG), T3's chat composer takes the focus through the macOS Accessibility API, and Cmd+V goes to T3. When text comes before the caret and does not already end a line, Shift+Enter goes first, so the screenshot sits on its own line below what you typed. Focusing the composer first matters: T3 drops a pasted image when the focus is elsewhere, for example after you select text in the chat or in an HTML render.
 - This drives another app, so ShotPrompt needs Accessibility (System Settings > Privacy & Security > Accessibility). macOS asks the first time. Until you allow it, or when T3 shows no chat to paste into, the capture gets the icon as usual.
 
 ## Dispatch command

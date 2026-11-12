@@ -35,6 +35,19 @@ final class T3PasteTests: XCTestCase {
         XCTAssertFalse(pastesIntoT3(enabled: true, capturedBundleID: nil))
     }
 
+    func testBreaksLineBeforePaste() {
+        XCTAssertTrue(breaksLineBeforePaste(text: "look at this", caret: 12), "caret after text")
+        XCTAssertTrue(breaksLineBeforePaste(text: "look at this", caret: nil), "caret unknown counts as the end")
+        XCTAssertTrue(breaksLineBeforePaste(text: "ab", caret: 99), "caret past the end")
+        XCTAssertTrue(breaksLineBeforePaste(text: "first\nsecond", caret: 8), "mid line")
+        XCTAssertFalse(breaksLineBeforePaste(text: "first\n", caret: 6), "already on a new line")
+        XCTAssertFalse(breaksLineBeforePaste(text: "look", caret: 0), "caret at the start")
+        XCTAssertFalse(breaksLineBeforePaste(text: "look", caret: -1))
+        XCTAssertFalse(breaksLineBeforePaste(text: "", caret: 0), "empty composer")
+        XCTAssertFalse(breaksLineBeforePaste(text: nil, caret: nil), "text unreadable")
+        XCTAssertTrue(breaksLineBeforePaste(text: "تست 👀", caret: 6), "UTF-16 caret after an emoji")
+    }
+
     func testSettingKey() {
         XCTAssertEqual(pasteIntoT3Key, "pasteIntoT3")
     }

@@ -62,6 +62,18 @@ public func findComposer<Node>(roots: [Node], limit: Int, children: (Node) -> [N
     return first
 }
 
+// T3's composer holds a pasted image inline at the caret. A capture pasted
+// after text you typed goes on a line of its own, so Shift+Enter comes first
+// when the text before the caret does not already end a line. `caret` is the
+// selection start in UTF-16 units, as Accessibility gives it; when it cannot
+// be read, the caret counts as at the end.
+public func breaksLineBeforePaste(text: String?, caret: Int?) -> Bool {
+    guard let text = text as NSString?, text.length > 0 else { return false }
+    let end = min(max(caret ?? text.length, 0), text.length)
+    let before = text.substring(to: end)
+    return !before.isEmpty && !before.hasSuffix("\n")
+}
+
 // The capture as PNG bytes for the pasteboard, since T3 takes a pasted image
 // as a PNG file. A PNG goes as it is; a JPEG (Shottr's "Auto" format for
 // photo-heavy captures) is re-encoded. Nil when the file is not an image.
