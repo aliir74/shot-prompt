@@ -11,8 +11,9 @@
 // switch apps and goes on Esc, a Cmd/Ctrl shortcut, or 20 seconds idle. While
 // the prompt is empty, Esc, switching apps, or 5 seconds idle closes the
 // panel; once you have typed, only Esc does. Cmd shortcuts in the panel edit
-// the prompt. Holding Fn (Wispr Flow dictation) opens the prompt from the icon
-// and keeps an empty prompt open while you talk and a little after. The project
+// the prompt. Dictation (holding Fn, or Wispr Flow using the microphone with
+// any hotkey or hands-free) opens the prompt from the icon and keeps an empty
+// prompt open while you talk and a little after. The project
 // picker in the panel (Tab, or click it) sends the thread to another T3 project.
 // With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
 // that and lands in the chat open there, as if you pressed Cmd+V in it.
@@ -22,6 +23,7 @@
 
 import AppKit
 import Carbon.HIToolbox
+import CoreAudio
 import ShotPromptCore
 
 let config = Config(environment: ProcessInfo.processInfo.environment,
@@ -117,9 +119,12 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var idleTimer: Timer?
     private var keyMonitor: Any?
     private var fnMonitor: Any?
-    // Fn is down (dictation), or when it last came up.
+    // Dictation: Fn is down, a dictation app has the microphone (checked
+    // by micTimer), and when either was last seen.
     private var fnHeld = false
-    private var fnReleasedAt: Date?
+    private var micLive = false
+    private var micTimer: Timer?
+    private var dictationEndedAt: Date?
     private var activationObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
     // The last app to come forward that is neither Shottr nor this one: the
@@ -326,14 +331,21 @@ final class Controller: NSObject, NSTextViewDelegate {
             case .none: break
             case .expandAndHold:
                 self.expand()
-                self.fnHeld = true; self.fnReleasedAt = nil
+                self.fnHeld = true
             case .hold:
-                self.fnHeld = true; self.fnReleasedAt = nil
+                self.fnHeld = true
             case .release:
-                self.fnHeld = false; self.fnReleasedAt = Date()
+                self.fnHeld = false; self.dictationEndedAt = Date()
                 if !self.hasText { self.armIdle(dictationGraceSeconds) }
             }
             return event
+        }
+        micTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.micLive = Self.dictationMicLive()
+            guard self.micLive else { return }
+            self.dictationEndedAt = Date()
+            if expandsForDictation(micLive: true, onIcon: self.icon != nil) { self.expand() }
         }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -556,8 +568,36 @@ final class Controller: NSObject, NSTextViewDelegate {
     // The Fn flag is also read live, in case the dictation app keeps the
     // Fn events from reaching this panel.
     private var dictating: Bool {
-        dictationHolds(fnHeld: fnHeld || NSEvent.modifierFlags.contains(.function),
-                       releasedAt: fnReleasedAt, now: Date())
+        dictationHolds(active: fnHeld || micLive || NSEvent.modifierFlags.contains(.function),
+                       endedAt: dictationEndedAt, now: Date())
+    }
+
+    // Whether a dictation app (Wispr Flow) is recording from the microphone.
+    // Core Audio lists each process using audio; no permission is needed.
+    private static func dictationMicLive() -> Bool {
+        func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+            AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                       mElement: kAudioObjectPropertyElementMain)
+        }
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var list = address(kAudioHardwarePropertyProcessObjectList)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &list, 0, nil, &size) == noErr, size > 0 else { return false }
+        var processes = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &list, 0, nil, &size, &processes) == noErr else { return false }
+        return processes.contains { process in
+            var running: UInt32 = 0
+            var runningSize = UInt32(MemoryLayout<UInt32>.size)
+            var runningAddress = address(kAudioProcessPropertyIsRunningInput)
+            guard AudioObjectGetPropertyData(process, &runningAddress, 0, nil, &runningSize, &running) == noErr,
+                  running != 0 else { return false }
+            var bundle: Unmanaged<CFString>?
+            var bundleSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            var bundleAddress = address(kAudioProcessPropertyBundleID)
+            // A process without a bundle ID leaves it nil, which is no dictation app.
+            _ = AudioObjectGetPropertyData(process, &bundleAddress, 0, nil, &bundleSize, &bundle)
+            return isDictationApp(bundleID: bundle?.takeRetainedValue() as String?)
+        }
     }
 
     private func dismissIfEmpty() {
@@ -664,7 +704,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         keyMonitor = nil
         if let m = fnMonitor { NSEvent.removeMonitor(m) }
         fnMonitor = nil
-        fnHeld = false; fnReleasedAt = nil
+        micTimer?.invalidate()
+        micTimer = nil
+        fnHeld = false; micLive = false; dictationEndedAt = nil
         if let o = activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(o) }
         if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
         activationObserver = nil; resignObserver = nil

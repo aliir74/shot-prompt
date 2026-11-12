@@ -81,12 +81,28 @@ public func fnAction(keyCode: UInt16, fnDown: Bool, onIcon: Bool) -> FnAction {
     return onIcon ? .expandAndHold : .hold
 }
 
-// While Fn is held, and for a grace period after it comes up, an empty
-// prompt is waiting for dictation, so nothing closes it.
-public func dictationHolds(fnHeld: Bool, releasedAt: Date?, now: Date) -> Bool {
-    if fnHeld { return true }
-    guard let r = releasedAt else { return false }
-    return now.timeIntervalSince(r) < dictationGraceSeconds
+// Dictation apps whose microphone use means you are talking to the prompt.
+// This covers any hotkey and hands-free mode, where Fn is not held.
+public let dictationBundlePrefixes = ["com.electron.wispr-flow"]
+
+public func isDictationApp(bundleID: String?) -> Bool {
+    guard let b = bundleID else { return false }
+    return dictationBundlePrefixes.contains { b.hasPrefix($0) }
+}
+
+// A dictation app took the microphone while only the icon is up: open the
+// prompt, so the words land in it instead of dismissing the icon.
+public func expandsForDictation(micLive: Bool, onIcon: Bool) -> Bool {
+    micLive && onIcon
+}
+
+// While dictation is active (Fn held, or a dictation app has the microphone),
+// and for a grace period after it ends, an empty prompt is waiting for the
+// words, so nothing closes it.
+public func dictationHolds(active: Bool, endedAt: Date?, now: Date) -> Bool {
+    if active { return true }
+    guard let e = endedAt else { return false }
+    return now.timeIntervalSince(e) < dictationGraceSeconds
 }
 
 public enum ActivationAction: Equatable {

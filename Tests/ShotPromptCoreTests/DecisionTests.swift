@@ -61,12 +61,22 @@ final class DecisionTests: XCTestCase {
 
     func testDictationHolds() {
         let now = Date()
-        XCTAssertTrue(dictationHolds(fnHeld: true, releasedAt: nil, now: now))
-        XCTAssertFalse(dictationHolds(fnHeld: false, releasedAt: nil, now: now))
-        XCTAssertTrue(dictationHolds(fnHeld: false, releasedAt: now.addingTimeInterval(-2), now: now),
-                      "the words arrive after Fn comes up")
-        XCTAssertFalse(dictationHolds(fnHeld: false, releasedAt: now.addingTimeInterval(-dictationGraceSeconds),
+        XCTAssertTrue(dictationHolds(active: true, endedAt: nil, now: now))
+        XCTAssertFalse(dictationHolds(active: false, endedAt: nil, now: now))
+        XCTAssertTrue(dictationHolds(active: false, endedAt: now.addingTimeInterval(-2), now: now),
+                      "the words arrive after dictation ends")
+        XCTAssertFalse(dictationHolds(active: false, endedAt: now.addingTimeInterval(-dictationGraceSeconds),
                                       now: now))
+    }
+
+    func testDictationApps() {
+        XCTAssertTrue(isDictationApp(bundleID: "com.electron.wispr-flow"))
+        XCTAssertTrue(isDictationApp(bundleID: "com.electron.wispr-flow.helper"), "its audio helper holds the mic")
+        XCTAssertFalse(isDictationApp(bundleID: "us.zoom.xos"), "a call is not dictation")
+        XCTAssertFalse(isDictationApp(bundleID: nil))
+        XCTAssertTrue(expandsForDictation(micLive: true, onIcon: true))
+        XCTAssertFalse(expandsForDictation(micLive: true, onIcon: false), "the panel is already open")
+        XCTAssertFalse(expandsForDictation(micLive: false, onIcon: true))
     }
 
     func act(pid: Int32? = 50, bundle: String? = "com.other", returnTo: Int32? = nil, panel: Bool = false,
