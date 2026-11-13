@@ -16,9 +16,17 @@ cp Info.plist "$APP/Contents/Info.plist"
 codesign --force --sign - \
   --requirements "=designated => identifier \"$LABEL\"" "$APP"
 
+# An unset variable keeps the installed agent's value, so a plain rebuild
+# does not reset the default project to $HOME.
+installed() {
+  [ -f "$PLIST" ] && /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:$1" "$PLIST" 2>/dev/null || true
+}
+CWD="${SHOT_PROMPT_CWD:-$(installed SHOT_PROMPT_CWD)}"
+DISPATCH="${SHOT_PROMPT_DISPATCH:-$(installed SHOT_PROMPT_DISPATCH)}"
+
 sed -e "s|__APP__|$APP|" \
-    -e "s|__CWD__|${SHOT_PROMPT_CWD:-$HOME}|" \
-    -e "s|__DISPATCH__|${SHOT_PROMPT_DISPATCH:-$HOME/.local/bin/t3-dispatch}|" \
+    -e "s|__CWD__|${CWD:-$HOME}|" \
+    -e "s|__DISPATCH__|${DISPATCH:-$HOME/.local/bin/t3-dispatch}|" \
     launchagent.plist > "$PLIST"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 # bootout returns before the old agent is gone; bootstrapping too early fails
