@@ -42,7 +42,7 @@ ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userda
 SHOT_PROMPT_CWD=~/my/project SHOT_PROMPT_DISPATCH=~/bin/t3-dispatch ./build.sh
 ```
 
-This builds `~/Applications/ShotPrompt.app` and loads the `io.github.aliir74.shot-prompt` LaunchAgent (starts at login, restarts if it dies). Defaults: `SHOT_PROMPT_CWD=$HOME`, `SHOT_PROMPT_DISPATCH=~/.local/bin/t3-dispatch`, `SHOT_PROMPT_CAPTURE_DIR=~/Pictures`. Log: `/tmp/shot-prompt.log`.
+This builds `~/Applications/ShotPrompt.app` and loads the `io.github.aliir74.shot-prompt` LaunchAgent (starts at login, restarts if it dies). A rebuild keeps the installed agent's `SHOT_PROMPT_CWD` and `SHOT_PROMPT_DISPATCH` unless you set them again. First-install defaults: `SHOT_PROMPT_CWD=$HOME`, `SHOT_PROMPT_DISPATCH=~/.local/bin/t3-dispatch`, `SHOT_PROMPT_CAPTURE_DIR=~/Pictures`. Log: `/tmp/shot-prompt.log`.
 
 The app is ad-hoc signed with a designated requirement of just its bundle ID, so macOS keeps folder-access grants (for example Downloads, when the dispatch command lives there) across rebuilds. The tradeoff: any ad-hoc binary with the same bundle ID would match those grants too.
 
