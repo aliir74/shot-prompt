@@ -18,6 +18,10 @@
 // With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
 // that and lands in the chat open there, as if you pressed Cmd+V in it,
 // on a new line when text comes before the caret.
+// Each capture also reads the window it was taken in (app, title, page
+// address or file). The panel shows that as chips you can remove, the prompt
+// carries it in a <capture-context> block, and it picks the T3 project. The
+// menu bar menu holds the privacy settings for it.
 
 // This file is the AppKit shell: windows, views, event monitors, timers and
 // observers. Every decision it acts on lives in ShotPromptCore, which has the tests.
@@ -134,6 +138,19 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var lastAppObserver: NSObjectProtocol?
     // Counts captures, so a paste still waiting for T3 gives way to a newer one.
     private var captures = 0
+    // The captured window as read (it stays on this Mac), the context the
+    // prompt carries (after the settings and any chip you removed), and its chips.
+    private var window: WindowInfo?
+    private var serverFolder: String?
+    private var context = CaptureContext()
+    private var autoProject = false
+    private var chipViews: [NSButton] = []
+    private var chipsHeight: CGFloat = 0
+    private var projects: [Project] = []
+    // You chose a project in the picker, so the window no longer picks one.
+    private var pickedByHand = false
+    // Chips you removed, kept out when a settings change rebuilds the context.
+    private var removedKinds = Set<ContextKind>()
 
     func start() {
         watcher.onCapture = { [weak self] url in self?.show(url) }
@@ -169,13 +186,154 @@ final class Controller: NSObject, NSTextViewDelegate {
         case .replaceImage:
             image = url
             thumbnail?.image = NSImage(contentsOf: url)
-            return
         case .pasteIntoT3:
             dismiss()
             paste(url, into: app!)
+            return
         case .showIcon:
             showIcon(url)
         }
+        readContext(app, capture: captures)
+    }
+
+    // Reads the captured window off the main thread (Accessibility calls can
+    // take a moment), then shows its chips and picks its project. A newer
+    // capture makes the result stale. An excluded app is not read at all.
+    private func readContext(_ app: NSRunningApplication?, capture: Int) {
+        window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []
+        let settings = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) })
+        autoProject = settings.autoProject
+        applyContext()
+        guard let app, !settings.excludes(app.bundleIdentifier) else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let w = Self.readWindow(app, settings: settings)
+            let server = settings.autoProject ? Self.serverFolder(w) : nil
+            DispatchQueue.main.async {
+                guard let self, capture == self.captures else { return }
+                self.window = w
+                self.serverFolder = server
+                self.context = buildContext(w, settings: settings)
+                self.applyContext()
+            }
+        }
+    }
+
+    // The app, and through Accessibility its focused window's title and
+    // AXDocument (a browser's page address, a document app's file), else the
+    // address of the page in its web area (Electron apps). Safari shows its
+    // address to neither. Without the Accessibility grant, only the app.
+    private static func readWindow(_ app: NSRunningApplication, settings: ContextSettings) -> WindowInfo {
+        var w = WindowInfo(appName: app.localizedName, bundleID: app.bundleIdentifier)
+        guard settings.needsAccessibility, AXIsProcessTrusted() else { return w }
+        let a = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(a, 0.5)
+        guard let focused = axValue(a, kAXFocusedWindowAttribute),
+              CFGetTypeID(focused) == AXUIElementGetTypeID() else { return w }
+        let win = focused as! AXUIElement
+        w.title = axValue(win, kAXTitleAttribute) as? String
+        w.document = axValue(win, kAXDocumentAttribute) as? String
+        if cleanURL(w.document, keepQuery: true) == nil {
+            w.webURL = webAreaURL(in: win)
+        }
+        return w
+    }
+
+    // The first web area's address, breadth first, within a bounded walk.
+    private static func webAreaURL(in window: AXUIElement) -> String? {
+        var queue = ArraySlice([window])
+        var visited = 0
+        let deadline = Date().addingTimeInterval(webAreaSearchSeconds)
+        while let e = queue.popFirst(), visited < webAreaSearchLimit, Date() < deadline {
+            visited += 1
+            if axValue(e, kAXRoleAttribute) as? String == "AXWebArea", let u = axValue(e, "AXURL") {
+                return (u as? URL)?.absoluteString ?? u as? String
+            }
+            queue.append(contentsOf: axValue(e, kAXChildrenAttribute) as? [AXUIElement] ?? [])
+        }
+        return nil
+    }
+
+    // The folder of the server behind a localhost page, through lsof.
+    private static func serverFolder(_ w: WindowInfo) -> String? {
+        guard let port = localPort(w.document) ?? localPort(w.webURL),
+              let pid = lsofField(lsof(["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fp"]), "p") else { return nil }
+        return lsofField(lsof(["-a", "-p", pid, "-d", "cwd", "-Fn"]), "n")
+    }
+
+    private static func lsof(_ arguments: [String]) -> String {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        task.arguments = arguments
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do { try task.run() } catch { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // Shows the context in the open panel and lets the window pick the project.
+    private func applyContext() {
+        layoutChips()
+        guard autoProject, !pickedByHand, let pp = picker, let w = window,
+              let root = matchProject(w, serverFolder: serverFolder, projects: projects),
+              let item = pp.itemArray.first(where: { $0.representedObject as? String == root }) else { return }
+        pp.select(item)
+        pp.toolTip = "T3 project for the new thread, picked from the window you captured (Tab to change)"
+        layoutStatus()
+    }
+
+    // One removable chip per piece of context, between the prompt and the
+    // status row. The prompt moves up to make room.
+    private func layoutChips() {
+        guard let content = panel?.contentView, scroll != nil else { return }
+        chipViews.forEach { $0.removeFromSuperview() }
+        chipViews = contextChips(context).map { chip in
+            let b = NSButton(title: chip.label, target: self, action: #selector(removeChip(_:)))
+            b.bezelStyle = .inline
+            b.controlSize = .small
+            b.font = .systemFont(ofSize: 10)
+            b.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Remove")
+            b.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .bold)
+            b.imagePosition = .imageTrailing
+            b.lineBreakMode = .byTruncatingTail
+            b.refusesFirstResponder = true
+            b.identifier = NSUserInterfaceItemIdentifier(chip.kind.rawValue)
+            b.toolTip = chip.detail + "\nSent with the prompt. Click to leave it out."
+            return b
+        }
+        let layout = chipLayout(widths: chipViews.map { $0.fittingSize.width },
+                                x: PanelMetrics.thumb + 20, maxX: PanelMetrics.width - 12)
+        for (b, f) in zip(chipViews, layout.frames) {
+            b.frame = NSRect(x: f.minX, y: PanelMetrics.bottom - 10 + layout.height - f.maxY,
+                             width: f.width, height: f.height)
+            content.addSubview(b)
+        }
+        chipsHeight = layout.height
+        fitPrompt()
+    }
+
+    @objc private func removeChip(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue, let kind = ContextKind(rawValue: raw) else { return }
+        removedKinds.insert(kind)
+        context = context.removing(kind)
+        layoutChips()
+        refocus()
+    }
+
+    // The settings menu from the gear in the panel: the same menu as the menu
+    // bar icon, which a full menu bar can hide. A change shows at once in the chips.
+    @objc private func openSettings(_ sender: NSButton) {
+        let menu = settingsMenu.newMenu()
+        menuObservers += holdOpen(while: menu)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+        let settings = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) })
+        autoProject = settings.autoProject
+        if let w = window {
+            context = removedKinds.reduce(buildContext(w, settings: settings)) { $0.removing($1) }
+        }
+        applyContext()
     }
 
     // Pastes the capture into the chat open in T3: the image goes on the
@@ -430,8 +588,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         let clip = TopClipView()
         clip.drawsBackground = false
         sv.contentView = clip
-        // The panel grows downward, so the prompt grows with it.
-        sv.autoresizingMask = [.height]
+        // fitPrompt sets its frame: its height, and its bottom above the chips.
+        sv.autoresizingMask = []
         let f = PromptTextView(frame: NSRect(origin: .zero, size: sv.contentSize))
         f.placeholder = "Type to ask Claude about this capture"
         f.font = .systemFont(ofSize: 15)
@@ -461,9 +619,17 @@ final class Controller: NSObject, NSTextViewDelegate {
                 forName: name, object: clip, queue: .main) { [weak self] _ in self?.updateFade() })
         }
 
-        let projects = loadProjects(databasePath: config.t3Database)
+        projects = loadProjects(databasePath: config.t3Database)
+        let gear = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")!,
+                            target: self, action: #selector(openSettings(_:)))
+        gear.isBordered = false
+        gear.refusesFirstResponder = true
+        gear.contentTintColor = .secondaryLabelColor
+        gear.frame = NSRect(x: x - 2, y: 10, width: 18, height: 18)
+        gear.toolTip = "What each capture sends, and other settings"
+        content.addSubview(gear)
         let s = NSTextField(labelWithString: statusHint(hasProjects: !projects.isEmpty))
-        s.frame = NSRect(x: x, y: 12, width: w, height: 16)
+        s.frame = NSRect(x: x + 20, y: 12, width: w - 20, height: 16)
         s.font = .systemFont(ofSize: 11)
         s.textColor = .secondaryLabelColor
         s.lineBreakMode = .byTruncatingTail
@@ -480,7 +646,7 @@ final class Controller: NSObject, NSTextViewDelegate {
 
         panel = p; field = f; scroll = sv; thumbnail = iv; status = s
         layoutStatus()
-        fitPrompt()
+        applyContext()
         p.orderFrontRegardless()
         p.makeKey()
         p.makeFirstResponder(f)
@@ -507,16 +673,21 @@ final class Controller: NSObject, NSTextViewDelegate {
             pp.menu?.addItem(item)
         }
         pp.toolTip = "T3 project for the new thread (Tab)"
-        // While the menu is open, the empty-panel timers and observers must not close it.
-        menuObservers = [
+        menuObservers += holdOpen(while: pp.menu!)
+        return pp
+    }
+
+    // While a menu is open, the empty-panel timers and observers must not close the panel.
+    private func holdOpen(while menu: NSMenu) -> [NSObjectProtocol] {
+        [
             NotificationCenter.default.addObserver(
-                forName: NSMenu.didBeginTrackingNotification, object: pp.menu, queue: .main
+                forName: NSMenu.didBeginTrackingNotification, object: menu, queue: .main
             ) { [weak self] _ in
                 self?.menuOpen = true
                 self?.idleTimer?.invalidate()
             },
             NotificationCenter.default.addObserver(
-                forName: NSMenu.didEndTrackingNotification, object: pp.menu, queue: .main
+                forName: NSMenu.didEndTrackingNotification, object: menu, queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
                 self.menuOpen = false
@@ -525,7 +696,6 @@ final class Controller: NSObject, NSTextViewDelegate {
                 if !self.hasText { self.armIdle() }
             },
         ]
-        return pp
     }
 
     // A menu takes arrow keys only while its app is active, so ShotPrompt comes
@@ -557,6 +727,7 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     @objc private func pickedProject(_ item: NSMenuItem) {
+        pickedByHand = true
         picker?.select(item)
         layoutStatus()
         if let f = field { panel?.makeFirstResponder(f) }
@@ -639,13 +810,15 @@ final class Controller: NSObject, NSTextViewDelegate {
         lm.ensureLayout(for: tc)
         let fit = ShotPromptCore.fitPrompt(usedHeight: lm.usedRect(for: tc).height,
                                            lineHeight: lm.defaultLineHeight(for: font),
-                                           maxLines: maxPromptLines)
+                                           maxLines: maxPromptLines, chips: chipsHeight)
         // A scroller only past the cap, so it does not flash on each new line.
         sv.hasVerticalScroller = fit.scrolls
         (sv.contentView as? TopClipView)?.pinTop = !fit.scrolls
+        sv.frame = NSRect(x: sv.frame.minX, y: PanelMetrics.bottom + chipsHeight,
+                          width: sv.frame.width, height: fit.height)
         if p.frame.height != fit.panelHeight {
             let frame = grownFrame(p.frame, height: fit.panelHeight, visible: p.screen?.visibleFrame)
-            // The prompt and thumbnail follow the panel by autoresizing.
+            // The thumbnail keeps to the top edge by autoresizing.
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = p.isVisible ? 0.12 : 0
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -687,10 +860,12 @@ final class Controller: NSObject, NSTextViewDelegate {
 
     private func send() {
         guard let url = image, let f = field else { return }
-        guard let prompt = sendablePrompt(f.string) else { return }
+        guard let typed = sendablePrompt(f.string) else { return }
+        let prompt = promptWithContext(typed, context)
         let cwd = picker?.selectedItem?.representedObject as? String ?? config.threadCwd
         f.isEditable = false
         picker?.isEnabled = false
+        chipViews.forEach { $0.isEnabled = false }
         status?.stringValue = "launching…"
         DispatchQueue.global().async {
             let (ok, out) = dispatch(executable: config.dispatchBin, prompt: prompt, image: url, cwd: cwd,
@@ -703,6 +878,7 @@ final class Controller: NSObject, NSTextViewDelegate {
                 } else {
                     f.isEditable = true
                     self.picker?.isEnabled = true
+                    self.chipViews.forEach { $0.isEnabled = true }
                     self.status?.toolTip = out
                     self.status?.stringValue = "failed: " + out
                     self.status?.textColor = .systemRed
@@ -734,6 +910,128 @@ final class Controller: NSObject, NSTextViewDelegate {
         icon = nil
         panel?.orderOut(nil)
         panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; picker = nil; image = nil
+        chipViews = []; chipsHeight = 0; projects = []; pickedByHand = false
+        window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []
+    }
+}
+
+// The menu bar icon's menu: what each capture sends, and the apps that send
+// nothing. Each item writes the same UserDefaults key `defaults write` would,
+// and every capture reads them again, so a change applies to the next capture.
+final class SettingsMenu: NSObject, NSMenuDelegate {
+    private var item: NSStatusItem?
+
+    func start() {
+        if UserDefaults.standard.object(forKey: showMenuBarIconKey) as? Bool == false { return }
+        let i = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        i.button?.image = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: "ShotPrompt")
+        i.menu = newMenu()
+        item = i
+    }
+
+    // A menu filled each time it opens. The panel's gear pops up its own copy.
+    func newMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+        return menu
+    }
+
+    // Built each time it opens, so it shows the current settings and apps.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let s = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) })
+        menu.addItem(header("Send with each capture"))
+        menu.addItem(toggle("App name", ContextSettingKey.app, s.app))
+        menu.addItem(toggle("Window title", ContextSettingKey.title, s.title, needsAX: true))
+        menu.addItem(toggle("Page address or file", ContextSettingKey.url, s.url, needsAX: true))
+        let query = toggle("Keep ?query and #fragment in addresses", ContextSettingKey.urlQuery, s.urlQuery)
+        query.indentationLevel = 1
+        query.isEnabled = s.url
+        query.toolTip = "They often hold an email address, a token or a search."
+        menu.addItem(query)
+        let excluded = NSMenuItem(title: "Never from these apps", action: nil, keyEquivalent: "")
+        excluded.submenu = appsMenu(s.excludedApps)
+        menu.addItem(excluded)
+        menu.addItem(.separator())
+        let pick = toggle("Pick the project from the captured window", ContextSettingKey.autoProject,
+                          s.autoProject, needsAX: true)
+        pick.toolTip = "Reads the window on this Mac only; nothing extra goes into the prompt."
+        menu.addItem(pick)
+        menu.addItem(toggle("Paste captures taken in T3 into its chat", pasteIntoT3Key,
+                            UserDefaults.standard.bool(forKey: pasteIntoT3Key), needsAX: true))
+        if (s.needsAccessibility || UserDefaults.standard.bool(forKey: pasteIntoT3Key)) && !AXIsProcessTrusted() {
+            menu.addItem(.separator())
+            let ax = NSMenuItem(title: "Allow Accessibility for titles, addresses and projects…",
+                                action: #selector(openAccessibility), keyEquivalent: "")
+            ax.target = self
+            menu.addItem(ax)
+        }
+    }
+
+    private func header(_ title: String) -> NSMenuItem {
+        let h = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        h.isEnabled = false
+        return h
+    }
+
+    private func toggle(_ title: String, _ key: String, _ on: Bool, needsAX: Bool = false) -> NSMenuItem {
+        let m = NSMenuItem(title: title, action: #selector(flip(_:)), keyEquivalent: "")
+        m.target = self
+        m.state = on ? .on : .off
+        m.representedObject = [key, needsAX] as [Any]
+        return m
+    }
+
+    @objc private func flip(_ m: NSMenuItem) {
+        guard let info = m.representedObject as? [Any], let key = info[0] as? String,
+              let needsAX = info[1] as? Bool else { return }
+        let on = m.state != .on
+        UserDefaults.standard.set(on, forKey: key)
+        // Turning on something that reads windows asks for the grant it needs.
+        if on && needsAX {
+            let ask = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(ask)
+        }
+    }
+
+    // Excluded apps first (checked), then the other open apps. Clicking one
+    // adds it to the list or takes it off.
+    private func appsMenu(_ excluded: [String]) -> NSMenu {
+        let menu = NSMenu()
+        let running = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != nil }
+        var names: [String: String] = [:]
+        for app in running { names[app.bundleIdentifier!] = app.localizedName }
+        func name(_ id: String) -> String {
+            if let n = names[id] { return n }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+            }
+            return id
+        }
+        let others = Set(running.map { $0.bundleIdentifier! }).subtracting(excluded)
+        let byName = { (a: String, b: String) in name(a).localizedCaseInsensitiveCompare(name(b)) == .orderedAscending }
+        for id in excluded.sorted(by: byName) + others.sorted(by: byName) {
+            let m = NSMenuItem(title: name(id), action: #selector(flipApp(_:)), keyEquivalent: "")
+            m.target = self
+            m.state = excluded.contains(id) ? .on : .off
+            m.representedObject = id
+            m.toolTip = id
+            menu.addItem(m)
+        }
+        return menu
+    }
+
+    @objc private func flipApp(_ m: NSMenuItem) {
+        guard let id = m.representedObject as? String else { return }
+        var list = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) }).excludedApps
+        if let i = list.firstIndex(of: id) { list.remove(at: i) } else { list.append(id) }
+        UserDefaults.standard.set(list, forKey: ContextSettingKey.excludedApps)
+    }
+
+    @objc private func openAccessibility() {
+        NSWorkspace.shared.open(URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
 }
 
@@ -741,6 +1039,8 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let controller = Controller()
 controller.start()
+let settingsMenu = SettingsMenu()
+settingsMenu.start()
 
 // The phone receiver (ios/README.md): on only when receiverPort and
 // receiverToken are set. Read once at launch; restart the agent after a change.

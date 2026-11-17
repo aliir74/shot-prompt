@@ -40,11 +40,12 @@ public struct PromptFit: Equatable {
 }
 
 // The prompt grows to fit the text, at least one line and at most maxLines;
-// past that it scrolls.
-public func fitPrompt(usedHeight: CGFloat, lineHeight: CGFloat, maxLines: CGFloat) -> PromptFit {
+// past that it scrolls. `chips` is the height of the context chips under it.
+public func fitPrompt(usedHeight: CGFloat, lineHeight: CGFloat, maxLines: CGFloat,
+                      chips: CGFloat = 0) -> PromptFit {
     let line = ceil(lineHeight), used = ceil(usedHeight), cap = line * maxLines
     let h = min(max(used, line), cap)
-    let height = max(PanelMetrics.minHeight, PanelMetrics.bottom + h + PanelMetrics.top)
+    let height = max(PanelMetrics.minHeight, PanelMetrics.bottom + chips + h + PanelMetrics.top)
     return PromptFit(height: h, scrolls: used > cap, panelHeight: height)
 }
 
@@ -85,4 +86,33 @@ public func fade(visible: CGRect, documentHeight: CGFloat, scrolls: Bool) -> Fad
     Fade(top: scrolls && visible.minY > 0.5,
          bottom: scrolls && visible.maxY < documentHeight - 0.5,
          edge: Double(min(24 / max(visible.height, 1), 0.5)))
+}
+
+public enum ChipMetrics {
+    public static let height: CGFloat = 18
+    public static let gap: CGFloat = 4
+    // A long window title is cut to this width; its tooltip has all of it.
+    public static let maxWidth: CGFloat = 150
+}
+
+public struct ChipLayout: Equatable {
+    // Each chip's frame, with y counted down from the top of the chip area.
+    public let frames: [CGRect]
+    // The chip area's height, a gap under the prompt included; 0 with no chips.
+    public let height: CGFloat
+}
+
+// Chips flow left to right from x, wrapping onto a new row at maxX. Each is
+// as wide as its content, at most ChipMetrics.maxWidth.
+public func chipLayout(widths: [CGFloat], x: CGFloat, maxX: CGFloat) -> ChipLayout {
+    var frames: [CGRect] = []
+    var cx = x, row: CGFloat = 0
+    for raw in widths {
+        let w = min(ceil(raw), ChipMetrics.maxWidth, maxX - x)
+        if cx > x && cx + w > maxX { cx = x; row += 1 }
+        frames.append(CGRect(x: cx, y: row * (ChipMetrics.height + ChipMetrics.gap), width: w, height: ChipMetrics.height))
+        cx += w + ChipMetrics.gap
+    }
+    let height = frames.isEmpty ? 0 : (row + 1) * (ChipMetrics.height + ChipMetrics.gap) + 2
+    return ChipLayout(frames: frames, height: height)
 }
