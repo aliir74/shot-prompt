@@ -17,7 +17,8 @@ final class DispatchTests: XCTestCase {
             echo "path:$PATH"
             echo "keep:$KEEP"
             """)
-        let r = dispatch(executable: bin, prompt: "what is this?", image: URL(fileURLWithPath: "/tmp/SCR-1.png"),
+        let r = dispatch(executable: bin, prompt: "what is this?",
+                         images: [URL(fileURLWithPath: "/tmp/SCR-1.png"), URL(fileURLWithPath: "/tmp/w.png")],
                          cwd: "/work/proj", environment: ["KEEP": "yes", "PATH": "/nope"], home: home)
         XCTAssertTrue(r.ok)
         XCTAssertEqual(r.output, """
@@ -25,6 +26,8 @@ final class DispatchTests: XCTestCase {
             arg:/work/proj
             arg:--image
             arg:/tmp/SCR-1.png
+            arg:--image
+            arg:/tmp/w.png
             arg:what is this?
             path:/Users/someone/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
             keep:yes
@@ -33,7 +36,7 @@ final class DispatchTests: XCTestCase {
 
     func testFailureMergesStderr() throws {
         let bin = try script("echo out; echo 'boom' >&2; exit 2\n")
-        let r = dispatch(executable: bin, prompt: "p", image: URL(fileURLWithPath: "/i.png"),
+        let r = dispatch(executable: bin, prompt: "p", images: [URL(fileURLWithPath: "/i.png")],
                          cwd: "/", environment: [:], home: home)
         XCTAssertFalse(r.ok)
         XCTAssertEqual(r.output, "out\nboom")
@@ -42,14 +45,14 @@ final class DispatchTests: XCTestCase {
     func testLargeOutputDoesNotHang() throws {
         // More than a pipe buffer (64 KB): reading must not wait for exit.
         let bin = try script("head -c 200000 /dev/zero | tr '\\\\0' x\n")
-        let r = dispatch(executable: bin, prompt: "p", image: URL(fileURLWithPath: "/i.png"),
+        let r = dispatch(executable: bin, prompt: "p", images: [URL(fileURLWithPath: "/i.png")],
                          cwd: "/", environment: [:], home: home)
         XCTAssertTrue(r.ok)
         XCTAssertEqual(r.output.count, 200000)
     }
 
     func testMissingExecutable() {
-        let r = dispatch(executable: "/nonexistent/\(UUID())", prompt: "p", image: URL(fileURLWithPath: "/i.png"),
+        let r = dispatch(executable: "/nonexistent/\(UUID())", prompt: "p", images: [URL(fileURLWithPath: "/i.png")],
                          cwd: "/", environment: [:], home: home)
         XCTAssertFalse(r.ok)
         XCTAssertFalse(r.output.isEmpty)
