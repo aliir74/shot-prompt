@@ -145,6 +145,9 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var settingsObserver: NSObjectProtocol?
     // Counts captures, so a paste still waiting for T3 gives way to a newer one.
     private var captures = 0
+    // Counts context reads. Only a new first capture or a dismiss makes a
+    // pending read stale; a capture added to the prompt does not.
+    private var contextReads = 0
     // The captured window as read (it stays on this Mac), the context the
     // prompt carries (after the settings and any chip you removed), and its chips.
     private var window: WindowInfo?
@@ -220,7 +223,7 @@ final class Controller: NSObject, NSTextViewDelegate {
             paste(url, into: app!)
         case .showIcon:
             showIcon(url)
-            readContext(app, image: url, capture: captures)
+            readContext(app, image: url)
         }
     }
 
@@ -238,7 +241,9 @@ final class Controller: NSObject, NSTextViewDelegate {
     // Reads the captured window off the main thread (Accessibility calls can
     // take a moment), then shows its chips and picks its project. A newer
     // capture makes the result stale. An excluded app is not read at all.
-    private func readContext(_ app: NSRunningApplication?, image: URL, capture: Int) {
+    private func readContext(_ app: NSRunningApplication?, image: URL) {
+        contextReads += 1
+        let read = contextReads
         window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []
         let settings = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) })
         autoProject = settings.autoProject
@@ -253,7 +258,7 @@ final class Controller: NSObject, NSTextViewDelegate {
             }
             let server = settings.autoProject ? Self.serverFolder(w) : nil
             DispatchQueue.main.async {
-                guard let self, capture == self.captures else { return }
+                guard let self, read == self.contextReads else { return Self.discard(w.windowShot) }
                 self.window = w
                 self.serverFolder = server
                 self.refreshContext()
@@ -328,12 +333,21 @@ final class Controller: NSObject, NSTextViewDelegate {
         task.arguments = ["-x", "-o", "-l", String(win.id), out.path]
         do { try task.run() } catch { return nil }
         task.waitUntilExit()
-        guard task.terminationStatus == 0, let shot = pixelSize(of: out) else { return nil }
-        if let cap = pixelSize(of: capture), !windowShotAdds(capturePixels: cap, shotPixels: shot) { return nil }
+        guard task.terminationStatus == 0, let shot = pixelSize(of: out) else { discard(out); return nil }
+        if let cap = pixelSize(of: capture), !windowShotAdds(capturePixels: cap, shotPixels: shot) {
+            discard(out)
+            return nil
+        }
         if let r = region, let box = outlineRect(region: r, window: win.bounds, shotPixels: shot) {
             drawOutline(on: out, rect: box)
         }
         return out
+    }
+
+    // Deletes a window shot: it holds what you cropped out, so it lives only
+    // until the prompt is sent (the dispatch has uploaded it by then) or dropped.
+    private static func discard(_ url: URL?) {
+        if let url { try? FileManager.default.removeItem(at: url) }
     }
 
     // The first web area's address, breadth first, within a bounded walk.
@@ -1040,6 +1054,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         panel?.orderOut(nil)
         panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; picker = nil; image = nil
         chipViews = []; chipsHeight = 0; panelTarget = 0; projects = []; pickedByHand = false
+        Self.discard(window?.windowShot)
+        contextReads += 1
         window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []; extraImages = []
     }
 }
