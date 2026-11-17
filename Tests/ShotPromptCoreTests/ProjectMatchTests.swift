@@ -46,6 +46,12 @@ final class ProjectMatchTests: XCTestCase {
                        "/Users/a/Coding/personal/shot-prompt")
         XCTAssertEqual(match(WindowInfo(webURL: "https://gitlab.com/ovou/ovou-platform.git")),
                        "/Users/a/Coding/ovou-platform")
+        // GitLab subgroups: the repository is the last part before "/-/".
+        XCTAssertEqual(match(WindowInfo(document: "https://gitlab.com/ovou/vault26/shot-prompt/-/issues/1")),
+                       "/Users/a/Coding/personal/shot-prompt")
+        XCTAssertEqual(match(WindowInfo(document: "https://gitlab.com/ovou/team/shot-prompt")),
+                       "/Users/a/Coding/personal/shot-prompt")
+        XCTAssertNil(match(WindowInfo(document: "https://gitlab.com/ovou/-/issues")))
         // Two folders share the name.
         XCTAssertNil(match(WindowInfo(document: "https://github.com/x/api")))
         XCTAssertNil(match(WindowInfo(document: "https://github.com/aliir74")))

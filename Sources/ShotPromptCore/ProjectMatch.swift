@@ -66,9 +66,12 @@ private func matchByPath(_ paths: [String], _ projects: [Project]) -> Set<String
 private func matchByRepo(_ address: String?, _ projects: [Project]) -> Set<String> {
     guard let address, let c = URLComponents(string: address),
           let host = c.host?.lowercased(), host == "github.com" || host == "gitlab.com" else { return [] }
-    let parts = c.path.split(separator: "/")
+    var parts = c.path.split(separator: "/")
+    // GitLab nests groups (group/subgroup/repo) and starts its pages with "-":
+    // the repository is the last part before that.
+    if host == "gitlab.com", let dash = parts.firstIndex(of: "-") { parts = Array(parts[..<dash]) }
     guard parts.count >= 2 else { return [] }
-    var repo = parts[1].lowercased()
+    var repo = (host == "gitlab.com" ? parts.last! : parts[1]).lowercased()
     if repo.hasSuffix(".git") { repo = String(repo.dropLast(4)) }
     return Set(projects.filter { folderName($0.root) == repo }.map(\.root))
 }

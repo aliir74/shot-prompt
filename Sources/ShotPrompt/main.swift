@@ -31,6 +31,9 @@ import Carbon.HIToolbox
 import CoreAudio
 import ShotPromptCore
 
+// Posted by the settings menu after each change, so an open panel follows it.
+let settingsChangedNotification = Notification.Name("ShotPromptSettingsChanged")
+
 let config = Config(environment: ProcessInfo.processInfo.environment,
                     home: FileManager.default.homeDirectoryForCurrentUser)
 
@@ -136,6 +139,7 @@ final class Controller: NSObject, NSTextViewDelegate {
     // app a capture is taken in, while Shottr is in front for the capture.
     private var lastApp: NSRunningApplication?
     private var lastAppObserver: NSObjectProtocol?
+    private var settingsObserver: NSObjectProtocol?
     // Counts captures, so a paste still waiting for T3 gives way to a newer one.
     private var captures = 0
     // The captured window as read (it stays on this Mac), the context the
@@ -167,6 +171,9 @@ final class Controller: NSObject, NSTextViewDelegate {
                   !Self.bystander(app) else { return }
             self?.lastApp = app
         }
+        settingsObserver = NotificationCenter.default.addObserver(
+            forName: settingsChangedNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.refreshContext() }
     }
 
     private static func bystander(_ app: NSRunningApplication) -> Bool {
@@ -216,8 +223,7 @@ final class Controller: NSObject, NSTextViewDelegate {
                 guard let self, capture == self.captures else { return }
                 self.window = w
                 self.serverFolder = server
-                self.context = buildContext(w, settings: settings)
-                self.applyContext()
+                self.refreshContext()
             }
         }
     }
@@ -332,6 +338,12 @@ final class Controller: NSObject, NSTextViewDelegate {
         let menu = settingsMenu.newMenu()
         menuObservers += holdOpen(while: menu)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    // Builds the context from the window as read with the settings as they are
+    // now, not as they were at the capture: a change in either menu, even
+    // while the read was still running, shows in the chips and in what Enter sends.
+    private func refreshContext() {
         let settings = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) })
         autoProject = settings.autoProject
         if let w = window {
@@ -992,6 +1004,7 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
               let needsAX = info[1] as? Bool else { return }
         let on = m.state != .on
         UserDefaults.standard.set(on, forKey: key)
+        NotificationCenter.default.post(name: settingsChangedNotification, object: nil)
         // Turning on something that reads windows asks for the grant it needs.
         if on && needsAX {
             let ask = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -1032,6 +1045,7 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         var list = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) }).excludedApps
         if let i = list.firstIndex(of: id) { list.remove(at: i) } else { list.append(id) }
         UserDefaults.standard.set(list, forKey: ContextSettingKey.excludedApps)
+        NotificationCenter.default.post(name: settingsChangedNotification, object: nil)
     }
 
     @objc private func openAccessibility() {
