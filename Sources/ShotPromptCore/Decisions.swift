@@ -4,10 +4,12 @@ public let shottrBundleID = "cc.ffitch.shottr"
 
 // What a new capture does to what is on screen.
 public enum CaptureAction: Equatable {
-    // A send is running: the sent screenshot stays.
+    // A send is running: the sent screenshots stay.
     case ignore
-    // You have typed: swap the screenshot, keep the prompt.
-    case replaceImage
+    // You have typed: add the screenshot to the prompt's, keep the prompt.
+    case addImage
+    // You have typed and the prompt already has maxCaptures screenshots.
+    case full
     // Nothing typed: drop what is there and show the icon for the new capture.
     case showIcon
     // Nothing typed, and the capture was taken in T3 with the paste setting on:
@@ -15,11 +17,12 @@ public enum CaptureAction: Equatable {
     case pasteIntoT3
 }
 
-// Text in the panel means you already chose the panel, so a new capture swaps
-// its screenshot even when it was taken in T3.
-public func captureAction(hasText: Bool, editable: Bool, pasteIntoT3: Bool = false) -> CaptureAction {
+// Text in the panel means you already chose the panel, so a new capture joins
+// its screenshots, even when it was taken in T3. `count` is how many it has.
+public func captureAction(hasText: Bool, editable: Bool, count: Int = 1, pasteIntoT3: Bool = false) -> CaptureAction {
     guard hasText else { return pasteIntoT3 ? .pasteIntoT3 : .showIcon }
-    return editable ? .replaceImage : .ignore
+    guard editable else { return .ignore }
+    return count < maxCaptures ? .addImage : .full
 }
 
 public enum KeyAction: Equatable {

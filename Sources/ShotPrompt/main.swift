@@ -21,7 +21,10 @@
 // Each capture also reads the window it was taken in (app, title, page
 // address or file). The panel shows that as chips you can remove, the prompt
 // carries it in a <capture-context> block, and it picks the T3 project. The
-// menu bar menu holds the privacy settings for it.
+// menu bar menu holds the privacy settings for it. With the drag that made
+// the capture known, it also names the UI element under it and can add a
+// shot of the whole window with the capture outlined. A capture taken while
+// you type adds to the prompt's screenshots.
 
 // This file is the AppKit shell: windows, views, event monitors, timers and
 // observers. Every decision it acts on lives in ShotPromptCore, which has the tests.
@@ -142,6 +145,9 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var settingsObserver: NSObjectProtocol?
     // Counts captures, so a paste still waiting for T3 gives way to a newer one.
     private var captures = 0
+    // Counts context reads. Only a new first capture or a dismiss makes a
+    // pending read stale; a capture added to the prompt does not.
+    private var contextReads = 0
     // The captured window as read (it stays on this Mac), the context the
     // prompt carries (after the settings and any chip you removed), and its chips.
     private var window: WindowInfo?
@@ -159,6 +165,14 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var pickedByHand = false
     // Chips you removed, kept out when a settings change rebuilds the context.
     private var removedKinds = Set<ContextKind>()
+    // Captures added while typing, after the first; each shows as a thumbnail chip.
+    private var extraImages: [URL] = []
+    private var extraChips: [NSButton] = []
+    // The last mouse down and up anywhere, in AppKit screen points: Shottr's
+    // drag, which says where the capture was. Mouse events need no permission.
+    private var mouseDown: CGPoint?
+    private var mouseUp: (point: CGPoint, at: Date)?
+    private var mouseMonitor: Any?
 
     func start() {
         watcher.onCapture = { [weak self] url in self?.show(url) }
@@ -174,6 +188,10 @@ final class Controller: NSObject, NSTextViewDelegate {
         settingsObserver = NotificationCenter.default.addObserver(
             forName: settingsChangedNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.refreshContext() }
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] e in
+            if e.type == .leftMouseDown { self?.mouseDown = NSEvent.mouseLocation }
+            else { self?.mouseUp = (NSEvent.mouseLocation, Date()) }
+        }
     }
 
     private static func bystander(_ app: NSRunningApplication) -> Bool {
@@ -189,38 +207,58 @@ final class Controller: NSObject, NSTextViewDelegate {
                               isBystander: Self.bystander)
         let toT3 = pastesIntoT3(enabled: UserDefaults.standard.bool(forKey: pasteIntoT3Key),
                                 capturedBundleID: app?.bundleIdentifier)
-        // A new capture while typing replaces the screenshot, not the prompt.
-        // While a send is running, the sent screenshot stays.
-        switch captureAction(hasText: hasText, editable: field?.isEditable ?? true, pasteIntoT3: toT3) {
+        // A new capture while typing joins the prompt's screenshots. While a
+        // send is running, the sent screenshots stay.
+        switch captureAction(hasText: hasText, editable: field?.isEditable ?? true,
+                             count: 1 + extraImages.count, pasteIntoT3: toT3) {
         case .ignore:
             return
-        case .replaceImage:
-            image = url
-            thumbnail?.image = NSImage(contentsOf: url)
+        case .addImage:
+            extraImages.append(url)
+            layoutChips()
+        case .full:
+            status?.stringValue = "\(maxCaptures) captures at most; remove one to add another"
         case .pasteIntoT3:
             dismiss()
             paste(url, into: app!)
-            return
         case .showIcon:
             showIcon(url)
+            readContext(app, image: url)
         }
-        readContext(app, capture: captures)
+    }
+
+    // Where the capture was on screen (top-left coordinates), from the last
+    // drag, when its size matches the image. Nil for window and fullscreen captures.
+    private func captureRegion(of url: URL) -> CGRect? {
+        guard let up = mouseUp, let pixels = pixelSize(of: url),
+              let primary = NSScreen.screens.first else { return nil }
+        let screen = NSScreen.screens.first { $0.frame.contains(up.point) } ?? primary
+        return ShotPromptCore.captureRegion(down: mouseDown, up: up.point, upAge: Date().timeIntervalSince(up.at),
+                                            imagePixels: pixels, scale: screen.backingScaleFactor)
+            .map { topLeft($0, primaryHeight: primary.frame.height) }
     }
 
     // Reads the captured window off the main thread (Accessibility calls can
     // take a moment), then shows its chips and picks its project. A newer
     // capture makes the result stale. An excluded app is not read at all.
-    private func readContext(_ app: NSRunningApplication?, capture: Int) {
+    private func readContext(_ app: NSRunningApplication?, image: URL) {
+        contextReads += 1
+        let read = contextReads
         window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []
         let settings = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) })
         autoProject = settings.autoProject
         applyContext()
         guard let app, !settings.excludes(app.bundleIdentifier) else { return }
+        let region = captureRegion(of: image)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let w = Self.readWindow(app, settings: settings)
+            var w = Self.readWindow(app, settings: settings)
+            if settings.element, let r = region { w.element = Self.element(at: center(r), in: app) }
+            if settings.windowShot, CGPreflightScreenCaptureAccess() {
+                w.windowShot = Self.windowShot(of: app, region: region, capture: image)
+            }
             let server = settings.autoProject ? Self.serverFolder(w) : nil
             DispatchQueue.main.async {
-                guard let self, capture == self.captures else { return }
+                guard let self, read == self.contextReads else { return Self.discard(w.windowShot) }
                 self.window = w
                 self.serverFolder = server
                 self.refreshContext()
@@ -246,6 +284,70 @@ final class Controller: NSObject, NSTextViewDelegate {
             w.webURL = webAreaURL(in: win)
         }
         return w
+    }
+
+    // The element under a point, with its ancestors, when it belongs to the
+    // captured app (and not, say, the icon this app shows over the capture).
+    private static func element(at point: CGPoint, in app: NSRunningApplication) -> String? {
+        guard AXIsProcessTrusted() else { return nil }
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.5)
+        var hit: AXUIElement?
+        var pid: pid_t = 0
+        guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success,
+              let first = hit, AXUIElementGetPid(first, &pid) == .success, pid == app.processIdentifier
+        else { return nil }
+        var nodes: [ElementInfo] = []
+        var node: AXUIElement? = first
+        while let e = node, nodes.count < 8 {
+            nodes.append(ElementInfo(
+                role: axValue(e, kAXRoleAttribute) as? String, subrole: axValue(e, kAXSubroleAttribute) as? String,
+                title: axValue(e, kAXTitleAttribute) as? String, label: axValue(e, kAXDescriptionAttribute) as? String,
+                value: axValue(e, kAXValueAttribute) as? String, domID: axValue(e, "AXDOMIdentifier") as? String,
+                classes: axValue(e, "AXDOMClassList") as? [String] ?? []))
+            node = axValue(e, kAXParentAttribute).flatMap {
+                CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil
+            }
+        }
+        return describeElement(nodes)
+    }
+
+    // The captured app's window as an image, through `screencapture -l`
+    // (Screen Recording), with the capture outlined when its place is known.
+    // Nil when the capture already is the whole window.
+    private static func windowShot(of app: NSRunningApplication, region: CGRect?, capture: URL) -> URL? {
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        let windows = info.compactMap { w -> ListedWindow? in
+            guard let id = w[kCGWindowNumber as String] as? Int, let pid = w[kCGWindowOwnerPID as String] as? Int32,
+                  let bounds = (w[kCGWindowBounds as String] as? NSDictionary)
+                    .flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }) else { return nil }
+            return ListedWindow(id: id, pid: pid, layer: w[kCGWindowLayer as String] as? Int ?? 0, bounds: bounds)
+        }
+        guard let win = pickWindow(windows, pid: app.processIdentifier, at: region.map(center)) else { return nil }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ShotPrompt-window")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let out = dir.appendingPathComponent("window-\(UUID().uuidString).png")
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        task.arguments = ["-x", "-o", "-l", String(win.id), out.path]
+        do { try task.run() } catch { return nil }
+        task.waitUntilExit()
+        guard task.terminationStatus == 0, let shot = pixelSize(of: out) else { discard(out); return nil }
+        if let cap = pixelSize(of: capture), !windowShotAdds(capturePixels: cap, shotPixels: shot) {
+            discard(out)
+            return nil
+        }
+        if let r = region, let box = outlineRect(region: r, window: win.bounds, shotPixels: shot) {
+            drawOutline(on: out, rect: box)
+        }
+        return out
+    }
+
+    // Deletes a window shot: it holds what you cropped out, so it lives only
+    // until the prompt is sent (the dispatch has uploaded it by then) or dropped.
+    private static func discard(_ url: URL?) {
+        if let url { try? FileManager.default.removeItem(at: url) }
     }
 
     // The first web area's address, breadth first, within a bounded walk.
@@ -313,6 +415,22 @@ final class Controller: NSObject, NSTextViewDelegate {
             b.toolTip = chip.detail + "\nSent with the prompt. Click to leave it out."
             return b
         }
+        for (i, url) in extraImages.enumerated() {
+            let thumb = NSImage(size: NSSize(width: 22, height: 12), flipped: false) { r in
+                NSImage(contentsOf: url)?.draw(in: r)
+                return true
+            }
+            let b = NSButton(title: "Capture \(i + 2)", target: self, action: #selector(removeImage(_:)))
+            b.bezelStyle = .inline
+            b.controlSize = .small
+            b.font = .systemFont(ofSize: 10)
+            b.image = thumb
+            b.imagePosition = .imageLeading
+            b.refusesFirstResponder = true
+            b.tag = i
+            b.toolTip = "Capture \(i + 2), sent with the prompt. Click to remove it."
+            chipViews.append(b)
+        }
         let layout = chipLayout(widths: chipViews.map { $0.fittingSize.width },
                                 x: PanelMetrics.thumb + 20, maxX: PanelMetrics.width - 12)
         for (b, f) in zip(chipViews, layout.frames) {
@@ -322,6 +440,13 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
         chipsHeight = layout.height
         fitPrompt()
+    }
+
+    @objc private func removeImage(_ sender: NSButton) {
+        guard extraImages.indices.contains(sender.tag) else { return }
+        extraImages.remove(at: sender.tag)
+        layoutChips()
+        refocus()
     }
 
     @objc private func removeChip(_ sender: NSButton) {
@@ -878,14 +1003,15 @@ final class Controller: NSObject, NSTextViewDelegate {
     private func send() {
         guard let url = image, let f = field else { return }
         guard let typed = sendablePrompt(f.string) else { return }
-        let prompt = promptWithContext(typed, context)
+        let prompt = promptWithContext(typed, context, captures: 1 + extraImages.count)
+        let images = [url] + [context.windowShot].compactMap { $0 } + extraImages
         let cwd = picker?.selectedItem?.representedObject as? String ?? config.threadCwd
         f.isEditable = false
         picker?.isEnabled = false
         chipViews.forEach { $0.isEnabled = false }
         status?.stringValue = "launching…"
         DispatchQueue.global().async {
-            let (ok, out) = dispatch(executable: config.dispatchBin, prompt: prompt, image: url, cwd: cwd,
+            let (ok, out) = dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
                                      environment: config.environment, home: config.home)
             DispatchQueue.main.async {
                 if ok {
@@ -928,7 +1054,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         panel?.orderOut(nil)
         panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; picker = nil; image = nil
         chipViews = []; chipsHeight = 0; panelTarget = 0; projects = []; pickedByHand = false
-        window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []
+        Self.discard(window?.windowShot)
+        contextReads += 1
+        window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []; extraImages = []
     }
 }
 
@@ -966,6 +1094,11 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         query.isEnabled = s.url
         query.toolTip = "They often hold an email address, a token or a search."
         menu.addItem(query)
+        menu.addItem(toggle("UI element under the capture", ContextSettingKey.element, s.element, needsAX: true))
+        let shot = toggle("Whole window, capture outlined", ContextSettingKey.windowShot, s.windowShot,
+                          needsScreen: true)
+        shot.toolTip = "A second image: everything you cropped out of the window. Needs Screen Recording."
+        menu.addItem(shot)
         let excluded = NSMenuItem(title: "Never from these apps", action: nil, keyEquivalent: "")
         excluded.submenu = appsMenu(s.excludedApps)
         menu.addItem(excluded)
@@ -983,6 +1116,17 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
             ax.target = self
             menu.addItem(ax)
         }
+        if s.windowShot && !CGPreflightScreenCaptureAccess() {
+            let sr = NSMenuItem(title: "Allow Screen Recording for the window shot…",
+                                action: #selector(openScreenRecording), keyEquivalent: "")
+            sr.target = self
+            menu.addItem(sr)
+        }
+    }
+
+    @objc private func openScreenRecording() {
+        NSWorkspace.shared.open(URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
     private func header(_ title: String) -> NSMenuItem {
@@ -991,20 +1135,22 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         return h
     }
 
-    private func toggle(_ title: String, _ key: String, _ on: Bool, needsAX: Bool = false) -> NSMenuItem {
+    private func toggle(_ title: String, _ key: String, _ on: Bool, needsAX: Bool = false,
+                        needsScreen: Bool = false) -> NSMenuItem {
         let m = NSMenuItem(title: title, action: #selector(flip(_:)), keyEquivalent: "")
         m.target = self
         m.state = on ? .on : .off
-        m.representedObject = [key, needsAX] as [Any]
+        m.representedObject = [key, needsAX, needsScreen] as [Any]
         return m
     }
 
     @objc private func flip(_ m: NSMenuItem) {
         guard let info = m.representedObject as? [Any], let key = info[0] as? String,
-              let needsAX = info[1] as? Bool else { return }
+              let needsAX = info[1] as? Bool, let needsScreen = info[2] as? Bool else { return }
         let on = m.state != .on
         UserDefaults.standard.set(on, forKey: key)
         NotificationCenter.default.post(name: settingsChangedNotification, object: nil)
+        if on && needsScreen && !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
         // Turning on something that reads windows asks for the grant it needs.
         if on && needsAX {
             let ask = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -1071,7 +1217,7 @@ if let settings = receiverSettings(port: UserDefaults.standard.integer(forKey: r
         projects: { loadProjects(databasePath: config.t3Database) },
         saveImage: imageSaver(dir: FileManager.default.temporaryDirectory.appendingPathComponent("ShotPrompt-phone")),
         dispatch: { prompt, image, cwd in
-            dispatch(executable: config.dispatchBin, prompt: prompt, image: image, cwd: cwd,
+            dispatch(executable: config.dispatchBin, prompt: prompt, images: [image], cwd: cwd,
                      environment: config.environment, home: config.home)
         })
     do {

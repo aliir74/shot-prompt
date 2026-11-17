@@ -5,12 +5,14 @@ final class DecisionTests: XCTestCase {
     func testCaptureAction() {
         XCTAssertEqual(captureAction(hasText: false, editable: true), .showIcon)
         XCTAssertEqual(captureAction(hasText: false, editable: false), .showIcon)
-        XCTAssertEqual(captureAction(hasText: true, editable: true), .replaceImage)
+        XCTAssertEqual(captureAction(hasText: true, editable: true), .addImage)
         XCTAssertEqual(captureAction(hasText: true, editable: false), .ignore, "a send is running")
         XCTAssertEqual(captureAction(hasText: false, editable: true, pasteIntoT3: true), .pasteIntoT3)
-        XCTAssertEqual(captureAction(hasText: true, editable: true, pasteIntoT3: true), .replaceImage,
+        XCTAssertEqual(captureAction(hasText: true, editable: true, pasteIntoT3: true), .addImage,
                        "you already chose the panel")
         XCTAssertEqual(captureAction(hasText: true, editable: false, pasteIntoT3: true), .ignore)
+        XCTAssertEqual(captureAction(hasText: true, editable: true, count: maxCaptures - 1), .addImage)
+        XCTAssertEqual(captureAction(hasText: true, editable: true, count: maxCaptures), .full)
     }
 
     func key(ours: Bool = true, esc: Bool = false, cmd: Bool = false, icon: Bool = false) -> KeyAction {

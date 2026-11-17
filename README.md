@@ -10,8 +10,8 @@ Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), pr
 - The icon leaves 3 seconds after you switch to another app, so you can still click it on the way. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
 - Each capture also sends where it came from (app, window title, page address or file), shown as chips you can remove before sending. See [Context and privacy](#context-and-privacy).
 - The project picker at the bottom right says which T3 project gets the thread. It starts on the project the captured window belongs to when that is clear, else on `$SHOT_PROMPT_CWD`; Tab (or a click) opens the list of your T3 projects, pinned first, then most recently used. Arrow keys or type-to-select, then Enter, pick one.
-- Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> "<prompt>"`.
-- Before you type in the panel, Esc, switching to another app, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture swaps the screenshot but keeps the text. The usual edit shortcuts (Cmd+V, Cmd+A, Cmd+C, Cmd+X, Cmd+Z) work in the panel, empty or not. If Shottr also copies captures, the first Cmd+V while only the icon shows removes the icon; press it again to paste.
+- Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> [--image <more>…] "<prompt>"`.
+- Before you type in the panel, Esc, switching to another app, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture joins the prompt as another screenshot (up to 4; click its "Capture N" chip to take it out). The usual edit shortcuts (Cmd+V, Cmd+A, Cmd+C, Cmd+X, Cmd+Z) work in the panel, empty or not. If Shottr also copies captures, the first Cmd+V while only the icon shows removes the icon; press it again to paste.
 - Dictation (Wispr Flow): holding Fn, or Wispr recording from the microphone (any hotkey, or hands-free mode), opens the prompt from the icon. An empty prompt stays open while you dictate and for 10 seconds after, so the words have time to arrive.
 
 ## Context and privacy
@@ -29,9 +29,13 @@ Page: https://github.com/aliir74/shot-prompt/pulls
 </capture-context>
 ```
 
+Context comes from the first capture's window; captures added later send only their image. With more than one image, an `Images:` line in the block says which is which.
+
 - **App**: name and bundle ID.
 - **Window title**: the focused window's title.
 - **Page or file**: a browser tab's address (Chrome, Brave and other Chromium browsers), the page address of an Electron app (Slack, Notion), or the file open in a document app. Safari does not show its address to Accessibility, so Safari captures send none.
+- **UI element**: the accessibility element under the middle of the capture and its nearest named parent, for example `Button “Merge” #merge-btn in Group “Checks”`. A text field's content is never included. The capture's place on screen comes from the drag that made it, so window and fullscreen captures have no element.
+- **Whole window** (off by default): a second image of the whole window the capture came from, with the capture outlined in red. It sends what you cropped out, and it needs Screen Recording (macOS asks when you turn it on). It is skipped when the capture already is the whole window.
 - **Project**: the picker starts on the T3 project the window belongs to: a path in the title or the open file, a GitHub or GitLab repository with that folder name, the folder of the server behind a `localhost` page, or a title part that names a project. Two candidates mean no pick. This runs on your Mac only and adds nothing to the prompt. Picking a project by hand wins.
 
 The settings are in the menu bar icon's menu and behind the gear in the panel (the same menu; a full menu bar can hide the icon). A change applies to the next capture, and to the open panel at once.
@@ -42,11 +46,13 @@ The settings are in the menu bar icon's menu and behind the gear in the panel (t
 | Window title | on | `contextTitle` |
 | Page address or file | on | `contextURL` |
 | Keep `?query` and `#fragment` in addresses (they often hold an email address, a token or a search) | off | `contextURLQuery` |
+| UI element under the capture | on | `contextElement` |
+| Whole window, capture outlined | off | `contextWindowShot` |
 | Never from these apps (password managers to start with); nothing is read from them | 1Password, Bitwarden, Passwords, Keychain Access | `contextExcludedApps` (array of bundle IDs) |
 | Pick the project from the captured window | on | `contextAutoProject` |
 | Paste captures taken in T3 into its chat | off | `pasteIntoT3` |
 
-Window title, address and project need Accessibility (System Settings > Privacy & Security > Accessibility); turning one of them on asks for it, and the menu shows a shortcut there until it is granted. Without it, only the app name goes. User names and passwords in an address are always dropped, and only `http(s)` addresses go. Text from the window is cut to one line and capped in length. Hide the menu bar icon with `defaults write io.github.aliir74.shot-prompt showMenuBarIcon -bool false`.
+Window title, address, element and project need Accessibility (System Settings > Privacy & Security > Accessibility); turning one of them on asks for it, and the menu shows a shortcut there until it is granted. Without it, only the app name goes. User names and passwords in an address are always dropped, and only `http(s)` addresses go. Text from the window is cut to one line and capped in length. Hide the menu bar icon with `defaults write io.github.aliir74.shot-prompt showMenuBarIcon -bool false`.
 
 ## iPhone
 
@@ -69,7 +75,7 @@ It is read at every capture, so no restart is needed. How it works:
 
 ## Dispatch command
 
-ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userdata/statev2.sqlite`, read-only) for the project list; if it cannot, the panel has no picker and every thread goes to `$SHOT_PROMPT_CWD`. To open the thread it runs a command you provide, which must accept `--cwd DIR --image PATH PROMPT`, open the thread, and exit 0 (non-zero output is shown in the panel). To attach an image, the command can upload it through T3's `attachments.createUploadUrl` RPC, POST the bytes to the returned URL, and pass the `pending-…` attachment id in `orchestration.launchThread`'s `initialMessage.attachments`.
+ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userdata/statev2.sqlite`, read-only) for the project list; if it cannot, the panel has no picker and every thread goes to `$SHOT_PROMPT_CWD`. To open the thread it runs a command you provide, which must accept `--cwd DIR --image PATH [--image PATH…] PROMPT` (one `--image` per picture, in order), open the thread, and exit 0 (non-zero output is shown in the panel). To attach an image, the command can upload it through T3's `attachments.createUploadUrl` RPC, POST the bytes to the returned URL, and pass the `pending-…` attachment id in `orchestration.launchThread`'s `initialMessage.attachments`.
 
 ## Install
 
@@ -95,7 +101,7 @@ scripts/coverage.sh      # run them with coverage; fails below 100% of lines
 The code is a Swift package with two targets:
 
 - `Sources/ShotPromptCore`: everything that decides something. Capture detection and the wait for Shottr to finish writing, the T3 project list from SQLite (ordering, archived/deleted and missing-folder filtering), the picker list (default project first, parent folder on duplicate titles), what Esc, Cmd/Ctrl, Tab, Enter and app switches do, panel and prompt sizing, the scroll fade, running the dispatch command, and for the paste into T3: which app a capture was taken in, finding T3's composer in its accessibility tree, and the capture as PNG. `scripts/coverage.sh` requires every line here to be covered.
-Core also holds the capture context: the settings and their defaults, URL and title cleaning, the `<capture-context>` block, the chips and their layout, and the project match. Core also holds the iPhone receiver: HTTP and multipart parsing, the `/projects` and `/shot` routes, the `@project` prefix, and the loopback listener (tested over real sockets).
+Core also holds the capture context: the settings and their defaults, URL and title cleaning, the `<capture-context>` block, the chips and their layout, the project match, the capture's place from the drag, the element description, the window pick and the red outline, and the `Images:` line. Core also holds the iPhone receiver: HTTP and multipart parsing, the `/projects` and `/shot` routes, the `@project` prefix, and the loopback listener (tested over real sockets).
 - `Sources/ShotPrompt/main.swift`: the AppKit shell, excluded from the threshold. It holds the panel and view subclasses, the window setup and teardown in `Controller`, the key monitor, timers, notification observers, the Accessibility calls (Cmd+V for the paste into T3, and reading the captured window), the chips and the settings menu, and the run loop. Each of these needs a window server and real AppKit events, so it calls into Core for every decision and only applies the result to windows and views.
 
 CI (`.github/workflows/tests.yml`) runs `scripts/coverage.sh` and a release build of the app on every pull request.

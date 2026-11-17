@@ -11,13 +11,13 @@ public func sendablePrompt(_ text: String) -> String? {
     return prompt.isEmpty ? nil : prompt
 }
 
-// Runs `<executable> --cwd <cwd> --image <image> <prompt>` and waits. Returns
-// whether it exited 0, and its trimmed stdout and stderr.
-public func dispatch(executable: String, prompt: String, image: URL, cwd: String,
+// Runs `<executable> --cwd <cwd> --image <image> [--image <image>…] <prompt>`
+// and waits. Returns whether it exited 0, and its trimmed stdout and stderr.
+public func dispatch(executable: String, prompt: String, images: [URL], cwd: String,
                      environment: [String: String], home: URL) -> (ok: Bool, output: String) {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: executable)
-    task.arguments = ["--cwd", cwd, "--image", image.path, prompt]
+    task.arguments = ["--cwd", cwd] + images.flatMap { ["--image", $0.path] } + [prompt]
     var childEnv = environment
     childEnv["PATH"] = childPath(home: home)
     task.environment = childEnv
