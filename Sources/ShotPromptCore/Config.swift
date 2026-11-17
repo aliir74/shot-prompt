@@ -36,3 +36,11 @@ public let iconAwaySeconds: TimeInterval = 3
 public let dictationGraceSeconds: TimeInterval = 10
 // The prompt grows up to this many lines, then scrolls.
 public let maxPromptLines: Double = 6
+// The walk through a window's accessibility tree for its web page's address
+// stops after this many nodes or this long. An Electron app's page is near
+// the top; the caps bound a window that has none.
+public let webAreaSearchLimit = 1500
+public let webAreaSearchSeconds: TimeInterval = 0.5
+// Hide the menu bar icon (and with it the settings menu) with
+// `defaults write io.github.aliir74.shot-prompt showMenuBarIcon -bool false`.
+public let showMenuBarIconKey = "showMenuBarIcon"
