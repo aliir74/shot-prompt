@@ -146,6 +146,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var autoProject = false
     private var chipViews: [NSButton] = []
     private var chipsHeight: CGFloat = 0
+    // The height the panel is animating to. Its frame mid-animation is not
+    // the target, and two fits in a row (the chips clearing, then coming
+    // back) would otherwise skip the second and leave the first's height.
+    private var panelTarget: CGFloat = 0
     private var projects: [Project] = []
     // You chose a project in the picker, so the window no longer picks one.
     private var pickedByHand = false
@@ -816,7 +820,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         (sv.contentView as? TopClipView)?.pinTop = !fit.scrolls
         sv.frame = NSRect(x: sv.frame.minX, y: PanelMetrics.bottom + chipsHeight,
                           width: sv.frame.width, height: fit.height)
-        if p.frame.height != fit.panelHeight {
+        if panelTarget != fit.panelHeight {
+            panelTarget = fit.panelHeight
             let frame = grownFrame(p.frame, height: fit.panelHeight, visible: p.screen?.visibleFrame)
             // The thumbnail keeps to the top edge by autoresizing.
             NSAnimationContext.runAnimationGroup { ctx in
@@ -910,7 +915,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         icon = nil
         panel?.orderOut(nil)
         panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; picker = nil; image = nil
-        chipViews = []; chipsHeight = 0; projects = []; pickedByHand = false
+        chipViews = []; chipsHeight = 0; panelTarget = 0; projects = []; pickedByHand = false
         window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []
     }
 }
