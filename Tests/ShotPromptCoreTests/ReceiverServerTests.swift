@@ -3,12 +3,28 @@ import XCTest
 @testable import ShotPromptCore
 
 final class ReceiverServerTests: XCTestCase {
-    func freePort() -> UInt16 { UInt16.random(in: 40000...60000) }
+    // A port the OS just handed out, so parallel CI jobs never collide on it.
+    func freePort() -> UInt16 {
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        defer { Darwin.close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        withUnsafeMutablePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                _ = Darwin.bind(fd, $0, len)
+                _ = Darwin.getsockname(fd, $0, &len)
+            }
+        }
+        return UInt16(bigEndian: addr.sin_port)
+    }
 
     // Starts a server and waits until it listens.
     func startServer(port: UInt16, maxBody: Int = maxReceiverBody,
+                     onReply: ((HTTPRequest?, HTTPResponse) -> Void)? = nil,
                      handler: @escaping (HTTPRequest) -> HTTPResponse) throws -> ReceiverServer {
-        let server = try ReceiverServer(port: port, maxBody: maxBody, handler: handler)
+        let server = try ReceiverServer(port: port, maxBody: maxBody, onReply: onReply, handler: handler)
         let ready = expectation(description: "ready")
         server.start { error in XCTAssertNil(error); ready.fulfill() }
         wait(for: [ready], timeout: 5)
@@ -84,5 +100,29 @@ final class ReceiverServerTests: XCTestCase {
         second.start { error in XCTAssertNotNil(error); failed.fulfill() }
         wait(for: [failed], timeout: 5)
         second.stop()
+    }
+
+    func testReportsEveryReplyWithItsRequest() throws {
+        let port = freePort()
+        var lines: [String] = []
+        let lock = NSLock()
+        _ = try startServer(port: port, maxBody: 10, onReply: { req, res in
+            lock.lock(); lines.append(replyLogLine(req, res)); lock.unlock()
+        }) { _ in HTTPResponse(status: 502, message: "dispatch failed: boom") }
+        _ = exchange(port: port, [Data("POST /shot HTTP/1.1\r\nContent-Length: 2\r\n\r\nab".utf8)])
+        _ = exchange(port: port, [Data("POST / HTTP/1.1\r\nContent-Length: 99\r\n\r\n".utf8)])
+        lock.lock(); defer { lock.unlock() }
+        XCTAssertEqual(lines, ["POST /shot -> 502 dispatch failed: boom", "unparsed request -> 413 image too large"])
+    }
+
+    func testReplyLogLine() {
+        let req = HTTPRequest(method: "GET", path: "/projects")
+        XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 200, json: Data("[\"a\"]".utf8))), "GET /projects -> 200")
+        XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 200, json: Data("{}".utf8))), "GET /projects -> 200")
+        XCTAssertEqual(replyLogLine(nil, HTTPResponse(status: 400, text: "a\nb")), "unparsed request -> 400 a | b")
+        XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 502, message: "abcdef"), cap: 3), "GET /projects -> 502 abc…")
+        XCTAssertEqual(replyLogLine(HTTPRequest(method: "POST", path: "/shot"),
+                                    HTTPResponse(status: 200, message: "Started.", extra: ["appLink": "t3code://threads/e/t"])),
+                       "POST /shot -> 200 Started. t3code://threads/e/t")
     }
 }
