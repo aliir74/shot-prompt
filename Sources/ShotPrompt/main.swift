@@ -1168,11 +1168,13 @@ final class Controller: NSObject, NSTextViewDelegate {
     // The chip at the right edge as wide as its label, the hint at full width
     // first; a long message takes the room and the chip shrinks to its minimum.
     private func layoutStatus() {
-        guard let b = chip, let s = status, let font = s.font else { return }
+        guard let b = chip, let s = status, let cell = s.cell else { return }
+        // The cell's size includes the label's inner padding; the bare text
+        // width is a few points short and would cut the hint off.
         let l = targetLayout(containerWidth: s.superview?.bounds.width ?? 0,
                              labelWidth: b.attributedTitle.size().width,
                              hintMinX: s.frame.minX,
-                             hintWidth: (s.stringValue as NSString).size(withAttributes: [.font: font]).width)
+                             hintWidth: cell.cellSize.width)
         b.frame = l.chipFrame
         s.frame.size.width = l.hintWidth
     }
