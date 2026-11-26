@@ -39,8 +39,9 @@ public enum KeyAction: Equatable {
 // capture was meant for something else: get out of the way. Any other key on
 // the icon opens the prompt and becomes its first character. In the open
 // panel, Cmd/Ctrl shortcuts edit the prompt (Cmd+V, Cmd+A), even before any
-// typing. Keys for other windows, or while the picker menu is open, pass.
-// With the target popup open, Esc closes the popup first.
+// typing. Keys for other windows, or while the gear menu is open, pass.
+// The target popup counts as ours; while it is open, Esc closes only the
+// popup, and a second Esc closes the panel.
 public func keyAction(isOurs: Bool, isEscape: Bool, commandOrControl: Bool, onIcon: Bool,
                       popupOpen: Bool = false) -> KeyAction {
     guard isOurs else { return .pass }
@@ -114,8 +115,6 @@ public func dictationHolds(active: Bool, endedAt: Date?, now: Date) -> Bool {
 
 public enum ActivationAction: Equatable {
     case none
-    // The app the picker handed the front back to is in front again.
-    case clearReturn
     // The panel is open: close it if nothing is typed.
     case dismissIfEmpty
     // Only the icon is up: let it leave after this many seconds.
@@ -123,14 +122,13 @@ public enum ActivationAction: Equatable {
 }
 
 // Switching apps before typing means the capture was not for Claude, so an
-// empty prompt closes and the icon leaves soon after, unless you are dictating. This app coming forward
-// for the picker, the picker handing the front back, and Shottr coming forward
-// around a capture are not switches.
+// empty prompt closes and the icon leaves soon after, unless you are
+// dictating. This app coming forward and Shottr coming forward around a
+// capture are not switches.
 public func activationAction(activatedPID: Int32?, activatedBundleID: String?, ownPID: Int32,
-                             returnToPID: Int32?, panelOpen: Bool, iconOpen: Bool,
+                             panelOpen: Bool, iconOpen: Bool,
                              iconTimeLeft: TimeInterval, dictating: Bool = false) -> ActivationAction {
     if activatedPID == ownPID || dictating { return .none }
-    if let r = returnToPID, activatedPID == r { return .clearReturn }
     if panelOpen { return .dismissIfEmpty }
     guard iconOpen, activatedBundleID != shottrBundleID, iconTimeLeft > iconAwaySeconds else { return .none }
     return .shortenIcon(iconAwaySeconds)
@@ -140,7 +138,7 @@ public enum TextCommand: Equatable {
     case send, dismiss, openPicker, none
 }
 
-// Enter sends, Esc closes, Tab opens the picker when there is one.
+// Enter sends, Esc closes, Tab opens the target popup when there is one.
 public func textCommand(_ selector: String, hasPicker: Bool) -> TextCommand {
     switch selector {
     case "insertNewline:": return .send

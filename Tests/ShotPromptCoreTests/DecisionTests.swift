@@ -81,17 +81,16 @@ final class DecisionTests: XCTestCase {
         XCTAssertFalse(expandsForDictation(micLive: false, onIcon: true))
     }
 
-    func act(pid: Int32? = 50, bundle: String? = "com.other", returnTo: Int32? = nil, panel: Bool = false,
+    func act(pid: Int32? = 50, bundle: String? = "com.other", panel: Bool = false,
              icon: Bool = false, left: TimeInterval = 20, dictating: Bool = false) -> ActivationAction {
-        activationAction(activatedPID: pid, activatedBundleID: bundle, ownPID: 1, returnToPID: returnTo,
+        activationAction(activatedPID: pid, activatedBundleID: bundle, ownPID: 1,
                          panelOpen: panel, iconOpen: icon, iconTimeLeft: left, dictating: dictating)
     }
 
     func testActivationAction() {
-        XCTAssertEqual(act(pid: 1, panel: true), .none, "this app coming forward for the picker")
-        XCTAssertEqual(act(pid: 50, returnTo: 50, panel: true), .clearReturn, "the front handed back")
-        XCTAssertEqual(act(pid: 51, returnTo: 50, panel: true), .dismissIfEmpty)
-        XCTAssertEqual(act(pid: nil, returnTo: 50, panel: true), .dismissIfEmpty, "unknown app")
+        XCTAssertEqual(act(pid: 1, panel: true), .none, "this app coming forward")
+        XCTAssertEqual(act(pid: 51, panel: true), .dismissIfEmpty)
+        XCTAssertEqual(act(pid: nil, panel: true), .dismissIfEmpty, "unknown app")
         XCTAssertEqual(act(panel: true, icon: true), .dismissIfEmpty)
         XCTAssertEqual(act(icon: true), .shortenIcon(iconAwaySeconds))
         XCTAssertEqual(act(bundle: shottrBundleID, icon: true), .none, "Shottr around a capture")

@@ -134,26 +134,5 @@ public enum SendTarget: Equatable {
     case thread(id: String)
 }
 
-// Longest thread title the picker shows; the selected one sets the picker's width.
+// Longest thread title the target chip and the "✓ Added to" notice show.
 public let threadTitleChars = 36
-
-public struct ThreadEntry: Equatable {
-    // The menu title: the thread's title, cut to threadTitleChars.
-    public let name: String
-    public let id: String
-    // The full title and its project.
-    public let toolTip: String
-}
-
-public func threadEntries(_ threads: [OpenThread]) -> [ThreadEntry] {
-    threads.map { t in
-        let name = t.title.count > threadTitleChars ? String(t.title.prefix(threadTitleChars - 1)) + "…" : t.title
-        return ThreadEntry(name: name, id: t.id, toolTip: "\(t.title) · \(t.project)")
-    }
-}
-
-// The hint next to the picker; shorter when the picker takes room.
-public func statusHint(hasProjects: Bool, toThread: Bool = false) -> String {
-    if toThread { return "↩ add to thread · ⇥ change · esc" }
-    return hasProjects ? "↩ new thread · ⇥ project · esc" : "↩ new T3 thread · esc dismiss"
-}

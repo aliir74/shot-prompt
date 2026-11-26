@@ -58,20 +58,6 @@ public func grownFrame(_ frame: CGRect, height: CGFloat, visible: CGRect?) -> CG
     return f
 }
 
-public struct StatusLayout: Equatable {
-    public let pickerFrame: CGRect
-    public let hintWidth: CGFloat
-}
-
-// The picker sits at the right edge, as wide as the chosen title (at most 200);
-// the hint label takes the rest.
-public func statusLayout(containerWidth: CGFloat, titleWidth: CGFloat, hintMinX: CGFloat) -> StatusLayout {
-    let right = containerWidth - 12
-    let pw = min(ceil(titleWidth) + 26, 200)
-    return StatusLayout(pickerFrame: CGRect(x: right - pw + 6, y: 8, width: pw, height: 22),
-                        hintWidth: max(right - pw - hintMinX - 4, 0))
-}
-
 public enum PopupMetrics {
     public static let rowHeight: CGFloat = 24
     public static let headerHeight: CGFloat = 22

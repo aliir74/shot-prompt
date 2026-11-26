@@ -122,10 +122,18 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var clipObservers: [NSObjectProtocol] = []
     private var thumbnail: NSImageView?
     private var status: NSTextField?
-    private var picker: NSPopUpButton?
+    private var gear: NSButton?
+    // The chip at the bottom right that names where Enter sends.
+    private var chip: NSButton?
+    // T3's open threads and the projects, read once when the panel opens.
+    private var threads: [OpenThread] = []
+    private var entries: [PickerEntry] = []
+    // Where Enter sends; retarget() works it out from what you picked and
+    // the project the captured window belongs to.
+    private var target: SendTarget = .newThread(root: config.threadCwd)
+    private var picked: SendTarget?
+    private var detectedRoot: String?
     private var menuOpen = false
-    // The app the Tab picker took the front from, until it is back in front.
-    private var returnTo: NSRunningApplication?
     private var menuObservers: [NSObjectProtocol] = []
     private var image: URL?
     private var idleTimer: Timer?
@@ -162,8 +170,6 @@ final class Controller: NSObject, NSTextViewDelegate {
     // back) would otherwise skip the second and leave the first's height.
     private var panelTarget: CGFloat = 0
     private var projects: [Project] = []
-    // You chose a project in the picker, so the window no longer picks one.
-    private var pickedByHand = false
     // Chips you removed, kept out when a settings change rebuilds the context.
     private var removedKinds = Set<ContextKind>()
     // Captures added while typing, after the first; each shows as a thumbnail chip.
@@ -219,6 +225,7 @@ final class Controller: NSObject, NSTextViewDelegate {
             layoutChips()
         case .full:
             status?.stringValue = "\(maxCaptures) captures at most; remove one to add another"
+            layoutStatus()
         case .pasteIntoT3:
             dismiss()
             paste(url, into: app!)
@@ -389,12 +396,30 @@ final class Controller: NSObject, NSTextViewDelegate {
     // Shows the context in the open panel and lets the window pick the project.
     private func applyContext() {
         layoutChips()
-        guard autoProject, !pickedByHand, let pp = picker, let w = window,
-              let root = matchProject(w, serverFolder: serverFolder, projects: projects),
-              let item = pp.itemArray.first(where: { $0.representedObject as? SendTarget == .newThread(root: root) })
-        else { return }
-        pp.select(item)
-        pp.toolTip = "T3 project for the new thread, picked from the window you captured (Tab to change)"
+        detectedRoot = autoProject
+            ? window.flatMap { matchProject($0, serverFolder: serverFolder, projects: projects) } : nil
+        retarget()
+    }
+
+    // Works out where Enter sends and shows it on the chip: blue for an open
+    // thread, grey for a new thread in a project. Also runs before the panel
+    // exists (from readContext), so the chip may be missing.
+    private func retarget() {
+        target = resolveTarget(picked: picked, remembered: nil, detectedRoot: detectedRoot,
+                               entries: entries, defaultRoot: config.threadCwd)
+        guard let b = chip else { return }
+        let c = targetChip(target, threads: threads, entries: entries)
+        let text: NSColor = c.toThread ? .systemBlue : .secondaryLabelColor
+        let fill: NSColor = c.toThread ? NSColor.systemBlue.withAlphaComponent(0.2)
+                                       : NSColor.labelColor.withAlphaComponent(0.1)
+        let para = NSMutableParagraphStyle()
+        para.alignment = .center
+        para.lineBreakMode = .byTruncatingTail
+        b.attributedTitle = NSAttributedString(string: c.label, attributes: [
+            .font: b.font ?? .systemFont(ofSize: 11, weight: .medium), .foregroundColor: text, .paragraphStyle: para,
+        ])
+        b.toolTip = c.toolTip
+        b.effectiveAppearance.performAsCurrentDrawingAppearance { b.layer?.backgroundColor = fill.cgColor }
         layoutStatus()
     }
 
@@ -671,12 +696,10 @@ final class Controller: NSObject, NSTextViewDelegate {
             switch activationAction(
                 activatedPID: app?.processIdentifier, activatedBundleID: app?.bundleIdentifier,
                 ownPID: ProcessInfo.processInfo.processIdentifier,
-                returnToPID: self.returnTo?.processIdentifier,
                 panelOpen: self.panel != nil, iconOpen: self.icon != nil,
                 iconTimeLeft: self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0,
                 dictating: self.dictating) {
             case .none: break
-            case .clearReturn: self.returnTo = nil
             case .dismissIfEmpty: self.dismissIfEmpty()
             case .shortenIcon(let seconds): self.armIdle(seconds)
             }
@@ -764,6 +787,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
 
         projects = loadProjects(databasePath: config.t3Database)
+        threads = loadThreads(databasePath: config.t3Database)
+        entries = pickerEntries(projects: projects, defaultRoot: config.threadCwd)
+        let hasPicker = !projects.isEmpty || !threads.isEmpty
         let gear = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")!,
                             target: self, action: #selector(openSettings(_:)))
         gear.isBordered = false
@@ -772,23 +798,29 @@ final class Controller: NSObject, NSTextViewDelegate {
         gear.frame = NSRect(x: x - 2, y: 10, width: 18, height: 18)
         gear.toolTip = "What each capture sends, and other settings"
         content.addSubview(gear)
-        let s = NSTextField(labelWithString: statusHint(hasProjects: !projects.isEmpty))
+        let s = NSTextField(labelWithString: targetHint(hasPicker: hasPicker))
         s.frame = NSRect(x: x + 20, y: 12, width: w - 20, height: 16)
         s.font = .systemFont(ofSize: 11)
         s.textColor = .secondaryLabelColor
         s.lineBreakMode = .byTruncatingTail
         content.addSubview(s)
-        if !projects.isEmpty {
-            let pp = makePicker(projects)
-            pp.frame = NSRect(x: x, y: 8, width: w, height: 22)
-            content.addSubview(pp)
-            picker = pp
+        var c: NSButton?
+        if hasPicker {
+            let b = NSButton(title: "", target: self, action: #selector(chipClicked))
+            b.isBordered = false
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 10
+            b.font = .systemFont(ofSize: 11, weight: .medium)
+            b.lineBreakMode = .byTruncatingTail
+            b.refusesFirstResponder = true
+            content.addSubview(b)
+            c = b
         }
 
         let screen = i.screen ?? NSScreen.main!
         p.setFrameOrigin(panelOrigin(iconFrame: anchor, panelHeight: p.frame.height, visible: screen.visibleFrame))
 
-        panel = p; field = f; scroll = sv; thumbnail = iv; status = s
+        panel = p; field = f; scroll = sv; thumbnail = iv; status = s; chip = c; self.gear = gear
         layoutStatus()
         applyContext()
         p.orderFrontRegardless()
@@ -799,48 +831,6 @@ final class Controller: NSObject, NSTextViewDelegate {
             forName: NSWindow.didResignKeyNotification, object: p, queue: .main
         ) { [weak self] _ in self?.dismissIfEmpty() }
         armIdle()
-    }
-
-    // T3's open threads first, to add the capture to one of those, then the
-    // projects for a new thread: SHOT_PROMPT_CWD first, then the rest. The
-    // default project starts selected, and the menu opens with it under the
-    // pointer, so the threads show just above it without scrolling past every project.
-    private func makePicker(_ projects: [Project]) -> NSPopUpButton {
-        let pp = NSPopUpButton(frame: .zero, pullsDown: false)
-        pp.isBordered = false
-        pp.controlSize = .small
-        pp.font = .systemFont(ofSize: 11)
-        pp.autoenablesItems = false
-        (pp.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtCenter
-        func header(_ title: String) {
-            let h = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            h.isEnabled = false
-            pp.menu?.addItem(h)
-        }
-        func add(_ name: String, _ target: SendTarget, _ toolTip: String, indent: Bool) -> NSMenuItem {
-            // Its own action, since Tab pops the menu up outside the button.
-            let item = NSMenuItem(title: name, action: #selector(pickedProject(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = target
-            item.toolTip = toolTip
-            item.indentationLevel = indent ? 1 : 0
-            pp.menu?.addItem(item)
-            return item
-        }
-        let threads = threadEntries(loadThreads(databasePath: config.t3Database))
-        if !threads.isEmpty {
-            header("Add to an open thread")
-            for entry in threads { _ = add(entry.name, .thread(id: entry.id), entry.toolTip, indent: true) }
-            pp.menu?.addItem(.separator())
-            header("New thread in")
-        }
-        let items = pickerEntries(projects: projects, defaultRoot: config.threadCwd).map {
-            add($0.name, .newThread(root: $0.root), $0.toolTip, indent: !threads.isEmpty)
-        }
-        if let first = items.first { pp.select(first) }
-        pp.toolTip = "T3 project for the new thread, or an open thread to add to (Tab)"
-        menuObservers += holdOpen(while: pp.menu!)
-        return pp
     }
 
     // While a menu is open, the empty-panel timers and observers must not close the panel.
@@ -864,64 +854,25 @@ final class Controller: NSObject, NSTextViewDelegate {
         ]
     }
 
-    // A menu takes arrow keys only while its app is active, so ShotPrompt comes
-    // forward for the menu and then gives the front back to the app you were in.
-    private func openPicker(_ pp: NSPopUpButton) {
-        returnTo = NSWorkspace.shared.frontmostApplication
-        if returnTo?.processIdentifier == ProcessInfo.processInfo.processIdentifier { returnTo = nil }
-        NSApp.activate(ignoringOtherApps: true)
-        // A menu shown while the switch is still settling closes at once.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self, self.picker === pp else { return }
-            pp.menu?.popUp(positioning: pp.selectedItem, at: .zero, in: pp)
-            // The panel takes the keyboard back once this app has stepped back;
-            // a key panel loses the keyboard while its app is still giving up the front.
-            guard let back = self.returnTo, back.activate() else { self.refocus(); return }
-            var token: NSObjectProtocol?
-            token = NotificationCenter.default.addObserver(
-                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                if let t = token { NotificationCenter.default.removeObserver(t) }
-                self?.refocus()
-            }
-        }
-    }
-
     private func refocus() {
         panel?.makeKey()
         if let f = field { panel?.makeFirstResponder(f) }
     }
 
-    @objc private func pickedProject(_ item: NSMenuItem) {
-        pickedByHand = true
-        picker?.select(item)
-        if case .thread = target {
-            picker?.toolTip = item.toolTip.map { "Adds to: \($0) (Tab to change)" }
-        } else {
-            picker?.toolTip = "T3 project for the new thread (Tab to change)"
-        }
-        status?.stringValue = statusHint(hasProjects: true, toThread: isThread(target))
-        layoutStatus()
-        if let f = field { panel?.makeFirstResponder(f) }
-    }
+    // Tab or a click on the chip: the target popup (Task 2.3).
+    private func togglePopup() {}
 
-    // Where Enter sends: the picker's choice, else a new thread in SHOT_PROMPT_CWD.
-    private var target: SendTarget {
-        picker?.selectedItem?.representedObject as? SendTarget ?? .newThread(root: config.threadCwd)
-    }
+    @objc private func chipClicked() {}
 
-    private func isThread(_ t: SendTarget) -> Bool {
-        if case .thread = t { return true }
-        return false
-    }
-
+    // The chip at the right edge as wide as its label, the hint at full width
+    // first; a long message takes the room and the chip shrinks to its minimum.
     private func layoutStatus() {
-        guard let pp = picker, let s = status, let font = pp.font else { return }
-        let title = (pp.titleOfSelectedItem ?? "") as NSString
-        let l = statusLayout(containerWidth: s.superview?.bounds.width ?? 0,
-                             titleWidth: title.size(withAttributes: [.font: font]).width,
-                             hintMinX: s.frame.minX)
-        pp.frame = l.pickerFrame
+        guard let b = chip, let s = status, let font = s.font else { return }
+        let l = targetLayout(containerWidth: s.superview?.bounds.width ?? 0,
+                             labelWidth: b.attributedTitle.size().width,
+                             hintMinX: s.frame.minX,
+                             hintWidth: (s.stringValue as NSString).size(withAttributes: [.font: font]).width)
+        b.frame = l.chipFrame
         s.frame.size.width = l.hintWidth
     }
 
@@ -1029,13 +980,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        switch textCommand(NSStringFromSelector(selector), hasPicker: picker != nil) {
+        switch textCommand(NSStringFromSelector(selector), hasPicker: chip != nil) {
         case .send: send()
         case .dismiss: dismiss()
-        case .openPicker:
-            // After this key event returns, so the menu's tracking loop does not run inside it.
-            let pp = picker!
-            DispatchQueue.main.async { self.openPicker(pp) }
+        case .openPicker: togglePopup()
         case .none: return false
         }
         return true
@@ -1052,9 +1000,10 @@ final class Controller: NSObject, NSTextViewDelegate {
         case .thread(let id): cwd = config.threadCwd; thread = id
         }
         f.isEditable = false
-        picker?.isEnabled = false
+        chip?.isEnabled = false
         chipViews.forEach { $0.isEnabled = false }
         status?.stringValue = thread == nil ? "launching…" : "sending…"
+        layoutStatus()
         DispatchQueue.global().async {
             let (ok, out) = dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
                                      environment: config.environment, home: config.home, thread: thread)
@@ -1065,11 +1014,12 @@ final class Controller: NSObject, NSTextViewDelegate {
                     self.dismiss()
                 } else {
                     f.isEditable = true
-                    self.picker?.isEnabled = true
+                    self.chip?.isEnabled = true
                     self.chipViews.forEach { $0.isEnabled = true }
                     self.status?.toolTip = out
                     self.status?.stringValue = "failed: " + out
                     self.status?.textColor = .systemRed
+                    self.layoutStatus()
                     NSLog("ShotPrompt dispatch failed: %@", out)
                 }
             }
@@ -1093,12 +1043,12 @@ final class Controller: NSObject, NSTextViewDelegate {
         menuObservers.forEach(NotificationCenter.default.removeObserver)
         menuObservers = []
         menuOpen = false
-        returnTo = nil
         icon?.orderOut(nil)
         icon = nil
         panel?.orderOut(nil)
-        panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; picker = nil; image = nil
-        chipViews = []; chipsHeight = 0; panelTarget = 0; projects = []; pickedByHand = false
+        panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; gear = nil; chip = nil; image = nil
+        chipViews = []; chipsHeight = 0; panelTarget = 0; projects = []
+        threads = []; entries = []; picked = nil; detectedRoot = nil; target = .newThread(root: config.threadCwd)
         Self.discard(window?.windowShot)
         contextReads += 1
         window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []; extraImages = []

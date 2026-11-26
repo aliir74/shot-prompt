@@ -54,15 +54,6 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(grownFrame(low, height: 174, visible: nil), CGRect(x: 100, y: -70, width: 420, height: 174))
     }
 
-    func testStatusLayout() {
-        XCTAssertEqual(statusLayout(containerWidth: 420, titleWidth: 40.2, hintMinX: 84),
-                       StatusLayout(pickerFrame: CGRect(x: 347, y: 8, width: 67, height: 22), hintWidth: 253))
-        // A long title is capped at 200.
-        XCTAssertEqual(statusLayout(containerWidth: 420, titleWidth: 500, hintMinX: 84).pickerFrame.width, 200)
-        // A tiny container leaves the hint no room, not negative room.
-        XCTAssertEqual(statusLayout(containerWidth: 100, titleWidth: 100, hintMinX: 84).hintWidth, 0)
-    }
-
     func testFade() {
         let view = CGRect(x: 0, y: 0, width: 300, height: 108)
         XCTAssertEqual(fade(visible: view, documentHeight: 50, scrolls: false),

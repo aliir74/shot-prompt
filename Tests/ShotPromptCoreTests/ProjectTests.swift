@@ -129,11 +129,6 @@ final class PickerTests: XCTestCase {
         let e = pickerEntries(projects: [Project(title: "x", root: root)], defaultRoot: root)
         XCTAssertEqual(e.first?.toolTip, "~/code/x")
     }
-
-    func testStatusHint() {
-        XCTAssertEqual(statusHint(hasProjects: true), "↩ new thread · ⇥ project · esc")
-        XCTAssertEqual(statusHint(hasProjects: false), "↩ new T3 thread · esc dismiss")
-    }
 }
 
 final class ThreadTests: XCTestCase {
@@ -215,19 +210,5 @@ final class ThreadTests: XCTestCase {
     func testMissingDatabaseOrTables() throws {
         XCTAssertEqual(loadThreads(databasePath: dir.appendingPathComponent("none.sqlite").path), [])
         XCTAssertEqual(loadThreads(databasePath: try makeDB(["CREATE TABLE other (x)"])), [])
-    }
-
-    func testEntriesCutLongTitles() {
-        let long = String(repeating: "x", count: threadTitleChars + 5)
-        let e = threadEntries([OpenThread(id: "1", title: "Short", project: "app"),
-                               OpenThread(id: "2", title: long, project: "app")])
-        XCTAssertEqual(e[0], ThreadEntry(name: "Short", id: "1", toolTip: "Short · app"))
-        XCTAssertEqual(e[1].name.count, threadTitleChars)
-        XCTAssertTrue(e[1].name.hasSuffix("…"))
-        XCTAssertEqual(e[1].toolTip, "\(long) · app")
-    }
-
-    func testStatusHintForAThread() {
-        XCTAssertEqual(statusHint(hasProjects: true, toThread: true), "↩ add to thread · ⇥ change · esc")
     }
 }
