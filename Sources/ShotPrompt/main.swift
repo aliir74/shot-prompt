@@ -1285,11 +1285,13 @@ final class Controller: NSObject, NSTextViewDelegate {
     // target, and choosing none leaves the target as it was.
     private func addFolder() {
         closePopup(refocus: false)
+        let f = field
         menuOpen = true
         idleTimer?.invalidate()
         let added = chooseProjectFolders()
         menuOpen = false
-        guard panel != nil else { return }
+        // A newer capture may have replaced the panel meanwhile: leave it alone.
+        guard let f, field === f else { return }
         projects = allProjects()
         entries = pickerEntries(projects: projects, defaultRoot: defaultFolder())
         if let t = addedFolderTarget(added, entries: entries) { picked = t }
