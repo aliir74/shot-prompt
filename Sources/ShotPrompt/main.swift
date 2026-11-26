@@ -13,9 +13,11 @@
 // panel; once you have typed, only Esc does. Cmd shortcuts in the panel edit
 // the prompt. Dictation (holding Fn, or Wispr Flow using the microphone with
 // any hotkey or hands-free) opens the prompt from the icon and keeps an empty
-// prompt open while you talk and a little after. The project
-// picker in the panel (Tab, or click it) sends the thread to another T3 project,
-// or adds the capture to one of T3's open threads instead of starting a new one.
+// prompt open while you talk and a little after. A chip at the bottom right
+// names where Enter sends: blue for one of T3's open threads, grey for a new
+// thread in a project. Tab or a click on it opens a search popup under the
+// panel (open threads, then projects); it takes the keys without bringing
+// this app forward, and Esc closes it before the panel.
 // With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
 // that and lands in the chat open there, as if you pressed Cmd+V in it,
 // on a new line when text comes before the caret.
@@ -113,6 +115,218 @@ final class TopClipView: NSClipView {
     }
 }
 
+// A layer cornerRadius leaves the blur's square corners drawn as white; a
+// mask image clips the material itself and the window shadow follows it. The
+// corners are cap insets, so the mask stretches when the window resizes.
+func roundedMask(size: NSSize, radius: CGFloat) -> NSImage {
+    let image = NSImage(size: size, flipped: false) { r in
+        NSColor.black.setFill()
+        NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+        return true
+    }
+    image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+    image.resizingMode = .stretch
+    return image
+}
+
+// The popup's list never takes the keys: they stay in the search field.
+final class PopupTable: NSTableView {
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+// Draws the selection in the accent colour although the table is not the
+// first responder.
+final class PopupRowView: NSTableRowView {
+    override var isEmphasized: Bool {
+        get { true }
+        set {}
+    }
+}
+
+// One row: a thread's title with its project and time ago on the right, a
+// project's name, or a section header.
+final class PopupCell: NSView {
+    private let title: NSTextField
+    private let detail: NSTextField?
+
+    init(_ row: PopupRow) {
+        switch row {
+        case .header(let text):
+            title = NSTextField(labelWithString: text)
+            title.font = .systemFont(ofSize: 11, weight: .semibold)
+            title.textColor = .secondaryLabelColor
+            detail = nil
+        case .item(let item):
+            title = NSTextField(labelWithString: item.title)
+            title.font = .systemFont(ofSize: 13)
+            if item.detail.isEmpty {
+                detail = nil
+            } else {
+                let d = NSTextField(labelWithString: item.detail)
+                d.font = .systemFont(ofSize: 11)
+                d.textColor = .secondaryLabelColor
+                d.alignment = .right
+                detail = d
+            }
+        }
+        title.lineBreakMode = .byTruncatingTail
+        super.init(frame: .zero)
+        addSubview(title)
+        if let d = detail { addSubview(d) }
+        if case .item(let item) = row { toolTip = item.toolTip }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func layout() {
+        super.layout()
+        let h = bounds.height, inset: CGFloat = 10
+        var right = bounds.width - inset
+        if let d = detail {
+            let w = ceil(d.fittingSize.width)
+            d.frame = NSRect(x: right - w, y: (h - d.fittingSize.height) / 2, width: w, height: d.fittingSize.height)
+            right -= w + 8
+        }
+        let th = title.fittingSize.height
+        title.frame = NSRect(x: inset, y: (h - th) / 2, width: max(right - inset, 0), height: th)
+    }
+}
+
+// The target popup under the panel: a search field over a list of open
+// threads and projects. It is a non-activating panel too, so it takes the
+// keys without bringing this app forward. Every decision is in Core
+// (popupRows, popupCommand, movedSelection); this only shows the rows.
+final class TargetPopup: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    let window: PromptPanel
+    let search: NSTextField
+    private let table = PopupTable()
+    var rowsFor: (String) -> [PopupRow] = { _ in [] }
+    var onPick: (SendTarget) -> Void = { _ in }
+    var onClose: () -> Void = {}
+    var onResize: () -> Void = {}
+    private(set) var rows: [PopupRow] = []
+    private var selected: Int?
+
+    override init() {
+        let width = PanelMetrics.width, height: CGFloat = 200
+        window = PromptPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+                             styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+        window.level = .floating
+        window.hidesOnDeactivate = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = true
+
+        let content = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        content.material = .hudWindow
+        content.state = .active
+        content.maskImage = roundedMask(size: NSSize(width: 25, height: 25), radius: 12)
+        window.contentView = content
+
+        let sh = PopupMetrics.searchHeight
+        search = NSTextField(frame: NSRect(x: 12, y: height - sh + (sh - 20) / 2, width: width - 24, height: 20))
+        search.isBordered = false
+        search.drawsBackground = false
+        search.focusRingType = .none
+        search.font = .systemFont(ofSize: 13)
+        search.placeholderString = "Search threads and projects"
+        search.cell?.isScrollable = true
+        search.cell?.wraps = false
+        search.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(search)
+
+        let pad = PopupMetrics.padding
+        let sv = NSScrollView(frame: NSRect(x: 0, y: pad / 2, width: width, height: height - sh - pad))
+        sv.drawsBackground = false
+        sv.borderType = .noBorder
+        sv.hasVerticalScroller = true
+        sv.autohidesScrollers = true
+        sv.automaticallyAdjustsContentInsets = false
+        sv.verticalScroller = ThinScroller()
+        sv.autoresizingMask = [.width, .height]
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
+        column.resizingMask = .autoresizingMask
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.style = .plain
+        table.backgroundColor = .clear
+        table.intercellSpacing = .zero
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.selectionHighlightStyle = .regular
+        sv.documentView = table
+        column.width = sv.contentSize.width
+        content.addSubview(sv)
+        super.init()
+        search.delegate = self
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(rowClicked)
+    }
+
+    // The first rows, with the current target selected.
+    func show(_ rows: [PopupRow], selected: Int?) {
+        self.rows = rows
+        self.selected = selected
+        table.reloadData()
+        select()
+    }
+
+    private func select() {
+        guard let i = selected else { return table.deselectAll(nil) }
+        table.selectRowIndexes(IndexSet(integer: i), byExtendingSelection: false)
+        table.scrollRowToVisible(i)
+    }
+
+    // Typing filters the rows and selects the first match.
+    func controlTextDidChange(_ obj: Notification) {
+        let r = rowsFor(search.stringValue)
+        show(r, selected: popupSelection(r, current: nil))
+        onResize()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch popupCommand(NSStringFromSelector(selector)) {
+        case .up:
+            selected = movedSelection(rows, from: selected, by: -1)
+            select()
+        case .down:
+            selected = movedSelection(rows, from: selected, by: 1)
+            select()
+        case .pick:
+            if let t = popupTarget(rows, at: selected) { onPick(t) }
+        case .close:
+            onClose()
+        case .none:
+            return false
+        }
+        return true
+    }
+
+    @objc private func rowClicked() {
+        if let t = popupTarget(rows, at: table.clickedRow) { onPick(t) }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        PopupCell(rows[row])
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { PopupRowView() }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { return PopupMetrics.headerHeight }
+        return PopupMetrics.rowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        popupTarget(rows, at: row) != nil
+    }
+}
+
 final class Controller: NSObject, NSTextViewDelegate {
     private let watcher = CaptureWatcher(directory: config.captureDir)
     private var icon: PromptPanel?
@@ -133,6 +347,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var target: SendTarget = .newThread(root: config.threadCwd)
     private var picked: SendTarget?
     private var detectedRoot: String?
+    // The search popup Tab or a chip click opens, and when it last lost the keys.
+    private var popup: TargetPopup?
+    private var popupObserver: NSObjectProtocol?
+    private var popupClosedAt: Date?
     private var menuOpen = false
     private var menuObservers: [NSObjectProtocol] = []
     private var image: URL?
@@ -611,13 +829,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         let content = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: size, height: size))
         content.material = .hudWindow
         content.state = .active
-        // A layer cornerRadius leaves the blur's square corners drawn as white;
-        // a mask image clips the material itself and the window shadow follows it.
-        content.maskImage = NSImage(size: content.bounds.size, flipped: false) { r in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: r, xRadius: 12, yRadius: 12).fill()
-            return true
-        }
+        content.maskImage = roundedMask(size: content.bounds.size, radius: 12)
         p.contentView = content
 
         let iv = NSImageView(frame: content.bounds.insetBy(dx: 6, dy: 6))
@@ -649,10 +861,11 @@ final class Controller: NSObject, NSTextViewDelegate {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             let w = event.window
-            let ours = !self.menuOpen && w != nil && (w === self.panel || w === self.icon)
+            let ours = !self.menuOpen && w != nil
+                && (w === self.panel || w === self.icon || w === self.popup?.window)
             switch keyAction(isOurs: ours, isEscape: event.keyCode == 53,
                              commandOrControl: !event.modifierFlags.intersection([.command, .control]).isEmpty,
-                             onIcon: w === self.icon) {
+                             onIcon: w === self.icon, popupOpen: self.popup != nil) {
             case .pass:
                 return event
             case .dismiss:
@@ -662,7 +875,9 @@ final class Controller: NSObject, NSTextViewDelegate {
                 self.expand()
                 self.field?.keyDown(with: event)
                 return nil
-            case .closePopup: return event
+            case .closePopup:
+                self.closePopup(refocus: true)
+                return nil
             }
         }
         fnMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
@@ -700,7 +915,9 @@ final class Controller: NSObject, NSTextViewDelegate {
                 iconTimeLeft: self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0,
                 dictating: self.dictating) {
             case .none: break
-            case .dismissIfEmpty: self.dismissIfEmpty()
+            case .dismissIfEmpty:
+                self.closePopup(refocus: false)
+                self.dismissIfEmpty()
             case .shortenIcon(let seconds): self.armIdle(seconds)
             }
         }
@@ -859,10 +1076,84 @@ final class Controller: NSObject, NSTextViewDelegate {
         if let f = field { panel?.makeFirstResponder(f) }
     }
 
-    // Tab or a click on the chip: the target popup (Task 2.3).
-    private func togglePopup() {}
+    // Tab or a click on the chip opens the target popup; again closes it.
+    private func togglePopup() {
+        if popup != nil { closePopup(refocus: true) } else { openPopup() }
+    }
 
-    @objc private func chipClicked() {}
+    // A click on the chip while the popup is open first takes the keys from
+    // the popup, which closes it; that same click must not open it again.
+    @objc private func chipClicked() {
+        if chipClickToggles(closedAt: popupClosedAt, now: Date()) { togglePopup() }
+    }
+
+    private func openPopup() {
+        guard let p = panel, chip != nil, let f = field, f.isEditable else { return }
+        idleTimer?.invalidate()
+        let pop = TargetPopup()
+        pop.rowsFor = { [weak self] query in
+            guard let self else { return [] }
+            return popupRows(threads: self.threads, entries: self.entries, detectedRoot: self.detectedRoot,
+                             current: self.target, query: query, now: Date())
+        }
+        pop.onPick = { [weak self] picked in self?.pick(picked) }
+        pop.onClose = { [weak self] in self?.closePopup(refocus: true) }
+        pop.onResize = { [weak self] in self?.placePopup() }
+        let rows = pop.rowsFor("")
+        pop.show(rows, selected: popupSelection(rows, current: target))
+        // Before the popup takes the keys: the panel's resign-key observer
+        // fires at once, and dismissIfEmpty() must see the popup by then.
+        popup = pop
+        placePopup()
+        p.addChildWindow(pop.window, ordered: .above)
+        pop.window.makeKey()
+        pop.window.makeFirstResponder(pop.search)
+        popupObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: pop.window, queue: .main
+        ) { [weak self] _ in self?.popupLostKey() }
+    }
+
+    // Under the panel (or above it near the bottom of the screen), as tall as
+    // its rows. `panelFrame` is where the panel is going, when it is animating.
+    private func placePopup(panelFrame: CGRect? = nil) {
+        guard let pop = popup, let p = panel else { return }
+        let screen = p.screen ?? NSScreen.main!
+        pop.window.setFrame(popupFrame(panel: panelFrame ?? p.frame, height: popupHeight(pop.rows),
+                                       visible: screen.visibleFrame), display: true)
+    }
+
+    private func closePopup(refocus again: Bool) {
+        guard let pop = popup else { return }
+        if let o = popupObserver { NotificationCenter.default.removeObserver(o) }
+        popupObserver = nil
+        panel?.removeChildWindow(pop.window)
+        pop.window.orderOut(nil)
+        popup = nil
+        if again { refocus() }
+        if !hasText { armIdle() }
+    }
+
+    // You clicked somewhere else: the popup goes, and the panel too when it
+    // is empty and did not get the keys.
+    private func popupLostKey() {
+        popupClosedAt = Date()
+        closePopup(refocus: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let p = self.panel, self.popup == nil, !p.isKeyWindow else { return }
+            self.dismissIfEmpty()
+        }
+    }
+
+    private func pick(_ choice: SendTarget) {
+        picked = choice
+        if let s = status, s.textColor == .systemRed {
+            s.stringValue = targetHint(hasPicker: true)
+            s.textColor = .secondaryLabelColor
+            s.toolTip = nil
+        }
+        retarget()
+        closePopup(refocus: true)
+    }
 
     // The chip at the right edge as wide as its label, the hint at full width
     // first; a long message takes the room and the chip shrinks to its minimum.
@@ -919,7 +1210,8 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     private func dismissIfEmpty() {
-        if hasText || menuOpen { return }
+        // The panel resigns key when the popup takes the keys.
+        if hasText || menuOpen || popup != nil { return }
         // Still dictating: look again later instead of closing.
         if dictating { return armIdle() }
         dismiss()
@@ -952,6 +1244,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         if panelTarget != fit.panelHeight {
             panelTarget = fit.panelHeight
             let frame = grownFrame(p.frame, height: fit.panelHeight, visible: p.screen?.visibleFrame)
+            // A child window follows the panel's moves, not its resizes.
+            placePopup(panelFrame: frame)
             // The thumbnail keeps to the top edge by autoresizing.
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = p.isVisible ? 0.12 : 0
@@ -1027,6 +1321,7 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     private func dismiss() {
+        closePopup(refocus: false)
         idleTimer?.invalidate()
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         keyMonitor = nil

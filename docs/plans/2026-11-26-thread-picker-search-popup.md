@@ -148,7 +148,7 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 
 ### Task 2.3: The search popup (decisions 1 to 6)
 **Files:** Modify: `Sources/ShotPrompt/main.swift`
-- [ ] Add `final class TargetPopup: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate` in `main.swift`. It owns:
+- [x] Add `final class TargetPopup: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate` in `main.swift`. It owns:
   - `let window: PromptPanel`: `[.nonactivatingPanel, .borderless]`, `.floating`, `hidesOnDeactivate = false`, clear background, an `NSVisualEffectView` (`.hudWindow`) with the rounded mask image used for the icon (pull the mask code in `showIcon` out into a small `roundedMask(size:radius:)` helper and use it in both places).
   - `search: NSTextField`: borderless, no focus ring, 13 pt, placeholder `Search threads and projects`, delegate `self`, at the top (`PopupMetrics.searchHeight`).
   - `table`: a view-based, single-column, headerless `NSTableView` subclass with `acceptsFirstResponder == false`, in an `NSScrollView` with `ThinScroller`. Item rows: title on the left (13 pt, truncating tail), `detail` on the right (11 pt, `secondaryLabelColor`, right-aligned), toolTip from the item. Header rows: 11 pt semibold secondary text, not selectable (`tableView(_:shouldSelectRow:)`), heights from `PopupMetrics`. Use an `NSTableRowView` subclass whose `isEmphasized` is always true so the selection draws in the accent colour while the search field has the keys.
@@ -156,19 +156,19 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
   - `controlTextDidChange`: `rows = rowsFor(search.stringValue)`; `selected = popupSelection(rows, current: nil)`; reload, select and scroll to the row; `onResize()`.
   - `control(_:textView:doCommandBy:)`: switch on `popupCommand(NSStringFromSelector(selector))`: `.up`/`.down` → `selected = movedSelection(rows, from: selected, by: -1/+1)` and scroll it into view; `.pick` → `if let t = popupTarget(rows, at: selected) { onPick(t) }`; `.close` → `onClose()`; `.none` → return false.
   - Delegate methods include `tableView(_:viewFor:row:)`, `tableView(_:heightOfRow:)` and `tableView(_:shouldSelectRow:)`. A row click (`table.target = self`, `table.action`) → `popupTarget(rows, at: table.clickedRow)` → `onPick`.
-- [ ] In `Controller` add `private var popup: TargetPopup?`, `private var popupObserver: NSObjectProtocol?`, `private var popupClosedAt: Date?`, and:
+- [x] In `Controller` add `private var popup: TargetPopup?`, `private var popupObserver: NSObjectProtocol?`, `private var popupClosedAt: Date?`, and:
   - `togglePopup()`: close with refocus when open, else `openPopup()`. `chipClicked` calls `togglePopup()` only when `chipClickToggles(closedAt: popupClosedAt, now: Date())` is true.
   - `openPopup()`: needs `panel`, `chip` and an editable `field`. Invalidate `idleTimer`. `rowsFor = { popupRows(threads:, entries:, detectedRoot:, current: target, query: $0, now: Date()) }`; the first rows use the empty query and `selected = popupSelection(rows, current: target)`. Frame from `popupFrame(panel: panel.frame, height: popupHeight(rows), visible: screen.visibleFrame)`. Assign `self.popup` before anything else touches the keys: the panel's resign-key observer fires the moment the popup takes them, and `dismissIfEmpty()` must already see `popup != nil` or an empty panel closes on Tab. Then `panel.addChildWindow(popup.window, ordered: .above)`, `popup.window.makeKey()`, `makeFirstResponder(search)`. Do not call `NSApp.activate`. Observe `NSWindow.didResignKeyNotification` on the popup window → `popupLostKey()`.
   - `closePopup(refocus: Bool)`: remove the observer first, `removeChildWindow`, `orderOut`, `popup = nil`; `refocus()` when asked; `armIdle()` when the prompt is empty.
   - `popupLostKey()`: set `popupClosedAt = Date()`, `closePopup(refocus: false)`, then on the next main-queue turn call `dismissIfEmpty()` if the panel is not the key window.
   - `onPick`: `picked = target`; if the status shows a red `failed:` message, reset it to `targetHint(hasPicker: true)` in `secondaryLabelColor`; `retarget(); closePopup(refocus: true)`. `onClose`: `closePopup(refocus: true)`. `onResize`: set the popup frame again from `popupHeight`/`popupFrame`.
-- [ ] Guards for the popup, next to the existing `menuOpen` ones:
+- [x] Guards for the popup, next to the existing `menuOpen` ones:
   - `dismissIfEmpty()` returns when `popup != nil` (the panel resigns key when the popup takes the keys; without this an empty panel closes at once).
   - The key monitor counts the popup window as ours (`w === popup?.window`) and passes `popupOpen: popup != nil` to `keyAction`; `.closePopup` → `closePopup(refocus: true)` and swallow the event. This gives Esc → popup only, second Esc → panel.
   - The activation observer's `.dismissIfEmpty` case closes the popup first (`closePopup(refocus: false)`).
   - `fitPrompt()` repositions an open popup after the panel's frame changes (child windows follow moves, not resizes). Pass the computed target frame (the local `frame` from `grownFrame(...)` in `fitPrompt`) to `popupFrame(panel:...)`, not `panel.frame`, which is still mid-animation.
   - `dismiss()` tears the popup down before the panel.
-- [ ] Update the header comment at the top of `main.swift` (the picker sentences) to describe the chip and the popup.
+- [x] Update the header comment at the top of `main.swift` (the picker sentences) to describe the chip and the popup.
 - [ ] Fallback, only if typing does not reach the search field while another app stays in front: host the popup's content view inside the panel itself (grow the panel downward by `popupHeight`), so the search field is a first responder of the window that already has the keys. Core stays as is.
 - [ ] Verify: `swift build -c release --product ShotPrompt` → `Build complete!`. Live (fixture, `SHOT_PROMPT_DISPATCH=/usr/bin/false`), with a stock app in front:
   1. Tab opens the popup under the panel: 10 thread rows with `project · time` in grey on the right, then "New thread in" with 5 projects: `blog` (detected) first, `notes` (default) second.
@@ -178,7 +178,7 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
   5. Tab, then Esc: only the popup closes and the prompt text is still there. Esc again: the panel closes.
   6. A chip click opens the popup; a second chip click closes it and it stays closed.
   7. With an empty prompt, the popup stays open for more than 5 s (the idle timer does not close the panel).
-- [ ] Commit: `Pick the thread or project in a search popup`
+- [x] Commit: `Pick the thread or project in a search popup`
 
 ### Task 2.4: Remember the last target (decisions 7, 8, 9)
 **Files:** Modify: `Sources/ShotPrompt/main.swift`
@@ -268,6 +268,11 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 | Task 1.3: a detected or current root that is not among the picker entries adds no project row | Rows need the entry's name and toolTip; `matchProject` only returns T3 project roots, which are always entries |
 | Task 1.4: `lastTargetMinutes` has no separate NSNumber branch | An NSNumber (what UserDefaults returns) bridges to `Int` in `as? Int`, so a second branch would be an uncovered line |
 | Task 1.5: chip toolTip for an unknown thread id is `Adds to an open thread (Tab to change)`; for a root outside the entries, `New thread in <path with ~>` | The plan named only the labels for these two cases |
+| Task 2.2: the chip's text colour and title go through an `attributedTitle` (with a centred, tail-truncating paragraph style) and `layoutStatus()` measures that string | A borderless button's title colour is not reliably set by `contentTintColor`; the attributed title is also the width the chip actually draws |
+| Task 2.3: `roundedMask(size:radius:)` sets cap insets with `.stretch`, and the popup passes a 25×25 mask | The popup resizes as you type; a fixed-size mask would clip a taller window to its first size |
+| Task 2.3: `TargetPopup.rows` is `private(set)` (not `private`), plus a `show(_:selected:)` method; the controller's `onResize` reads `rows` for `popupHeight` | The controller places the popup; it needs the current rows' height. `show` is the shared reload-select-scroll path for the first rows and for typing |
+| Task 2.3: the row cells are a small `PopupCell` view and the list a `PopupTable` (also `acceptsFirstMouse`) | Plan names the behaviour, not the classes; first-mouse makes a row click work in one click |
+| Task 2.3: `onPick` also clears the status toolTip when it resets a red `failed:` message | The failure path sets the toolTip to the error; it would otherwise outlive the message |
 
 ---
 
