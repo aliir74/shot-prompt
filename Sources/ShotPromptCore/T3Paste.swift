@@ -20,7 +20,7 @@ public func isT3(_ bundleID: String?) -> Bool {
 // Shottr comes forward around a capture, and this app for the picker. Neither
 // is the app the capture was taken in.
 public func isBystander(bundleID: String?, isSelf: Bool) -> Bool {
-    isSelf || bundleID == shottrBundleID
+    isSelf || isCaptureTool(bundleID)
 }
 
 // The app the capture was taken in: the front app, or the last other app to
@@ -29,6 +29,23 @@ public func capturedApp<App>(front: App?, previous: App?, isBystander: (App) -> 
     guard let f = front, !isBystander(f) else { return previous }
     return f
 }
+
+// The moment a capture was taken: the end of its drag, when that came
+// shortly before the file (macOS's floating thumbnail saves seconds later,
+// by when you may be in another app); else when the file was made.
+public func captureMoment(fileCreated: Date?, mouseUp: Date?, now: Date) -> Date {
+    let made = fileCreated ?? now
+    if let up = mouseUp, up <= made, made.timeIntervalSince(up) < captureRegionMaxAge { return up }
+    return made
+}
+
+// The app in front at a moment, from the apps that came forward and when.
+public func appInFront<App>(at moment: Date, history: [(app: App, since: Date)]) -> App? {
+    history.last { $0.since <= moment }?.app
+}
+
+// Keeps the last few apps that came forward; older ones cannot be a capture's app.
+public let appHistoryLimit = 20
 
 public func pastesIntoT3(enabled: Bool, capturedBundleID: String?) -> Bool {
     enabled && isT3(capturedBundleID)

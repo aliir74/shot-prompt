@@ -14,6 +14,8 @@ final class T3PasteTests: XCTestCase {
 
     func testIsBystander() {
         XCTAssertTrue(isBystander(bundleID: shottrBundleID, isSelf: false))
+        XCTAssertTrue(isBystander(bundleID: "com.apple.screencaptureui", isSelf: false), "macOS's capture overlay")
+        XCTAssertTrue(isBystander(bundleID: "com.apple.screenshot.launcher", isSelf: false), "the Screenshot app")
         XCTAssertTrue(isBystander(bundleID: nil, isSelf: true), "this app, run unbundled")
         XCTAssertFalse(isBystander(bundleID: t3BundleID, isSelf: false))
         XCTAssertFalse(isBystander(bundleID: nil, isSelf: false))
@@ -127,5 +129,28 @@ final class T3PasteTests: XCTestCase {
         XCTAssertEqual(pasteWaitSeconds, 1.5)
         XCTAssertEqual(pastePollSeconds, 0.1)
         XCTAssertEqual(composerSearchLimit, 20_000)
+    }
+
+    func testCaptureMoment() {
+        let now = Date()
+        let made = now.addingTimeInterval(-1)
+        XCTAssertEqual(captureMoment(fileCreated: made, mouseUp: made.addingTimeInterval(-5), now: now),
+                       made.addingTimeInterval(-5), "the drag, saved later behind the floating thumbnail")
+        XCTAssertEqual(captureMoment(fileCreated: made, mouseUp: nil, now: now), made, "no drag: when the file was made")
+        XCTAssertEqual(captureMoment(fileCreated: nil, mouseUp: nil, now: now), now)
+        XCTAssertEqual(captureMoment(fileCreated: made, mouseUp: made.addingTimeInterval(1), now: now), made,
+                       "a drag after the file is another one")
+        XCTAssertEqual(captureMoment(fileCreated: made, mouseUp: made.addingTimeInterval(-captureRegionMaxAge),
+                                     now: now), made, "too long before")
+    }
+
+    func testAppInFront() {
+        let t = Date()
+        let history: [(app: String, since: Date)] = [("browser", .distantPast), ("t3", t)]
+        XCTAssertEqual(appInFront(at: t.addingTimeInterval(-3), history: history), "browser",
+                       "you switched to T3 after the capture")
+        XCTAssertEqual(appInFront(at: t, history: history), "t3")
+        XCTAssertNil(appInFront(at: t, history: [(app: String, since: Date)]()))
+        XCTAssertEqual(appHistoryLimit, 20)
     }
 }

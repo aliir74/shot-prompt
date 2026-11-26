@@ -10,6 +10,8 @@ mkdir -p "$APP/Contents/MacOS"
 swift build -c release --product ShotPrompt
 cp "$(swift build -c release --show-bin-path)/ShotPrompt" "$APP/Contents/MacOS/ShotPrompt"
 cp Info.plist "$APP/Contents/Info.plist"
+mkdir -p "$APP/Contents/Resources"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Ad-hoc signing pins TCC grants to the cdhash, which changes on every build,
 # so macOS asked for Downloads access again after each rebuild. A designated
 # requirement on the bundle ID survives rebuilds.
@@ -26,8 +28,10 @@ DISPATCH="${SHOT_PROMPT_DISPATCH:-$(installed SHOT_PROMPT_DISPATCH)}"
 
 sed -e "s|__APP__|$APP|" \
     -e "s|__CWD__|${CWD:-$HOME}|" \
-    -e "s|__DISPATCH__|${DISPATCH:-$HOME/.local/bin/t3-dispatch}|" \
+    -e "s|__DISPATCH__|$DISPATCH|" \
     launchagent.plist > "$PLIST"
+# No dispatch command: the app sends to the target picked in its menu.
+[ -n "$DISPATCH" ] || /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:SHOT_PROMPT_DISPATCH" "$PLIST"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 # bootout returns before the old agent is gone; bootstrapping too early fails
 # with "Bootstrap failed: 5: Input/output error".

@@ -87,6 +87,7 @@ final class TargetPickerTests: XCTestCase {
             threadItem(threads[1]),
             .header("New thread in"),
             projectItem("eta"), projectItem("gamma"), projectItem("zeta"), projectItem("alpha"), projectItem("beta"),
+            .addFolder,
         ])
         XCTAssertEqual(maxPopupProjects, 5)
         if case .item(let i) = rows()[1] { XCTAssertEqual(i.detail, "app · 2m") } else { XCTFail() }
@@ -107,16 +108,93 @@ final class TargetPickerTests: XCTestCase {
         // Every folder name has "x-", no title or thread does: all 8 projects, in priority order.
         XCTAssertEqual(rows(query: "x-"), [.header("New thread in")] + [
             "eta", "gamma", "zeta", "alpha", "beta", "delta", "epsilon", "theta",
-        ].map(projectItem))
+        ].map(projectItem) + [.addFolder])
         XCTAssertEqual(projectNames(rows(query: "ETA")), ["eta", "zeta", "beta", "theta"])
-        XCTAssertEqual(rows(query: "app picker"), [.header("Add to an open thread"), threadItem(threads[0])])
-        XCTAssertEqual(rows(query: "notes write"), [.header("Add to an open thread"), threadItem(threads[1])])
-        XCTAssertEqual(rows(query: "zzz"), [.header("No match")])
+        XCTAssertEqual(rows(query: "app picker"),
+                       [.header("Add to an open thread"), threadItem(threads[0]), .addFolder])
+        XCTAssertEqual(rows(query: "notes write"),
+                       [.header("Add to an open thread"), threadItem(threads[1]), .addFolder])
+        XCTAssertEqual(rows(query: "zzz"), [.header("No match"), .addFolder], "a folder can still be added")
     }
 
     func testPopupRowsWithoutThreads() {
         XCTAssertEqual(rows(threads: []), [.header("New thread in")]
-            + ["eta", "gamma", "zeta", "alpha", "beta"].map(projectItem))
+            + ["eta", "gamma", "zeta", "alpha", "beta"].map(projectItem) + [.addFolder])
+    }
+
+    func testPopupRowsForOtherTargets() {
+        // Codex cannot add to a thread, so pickerThreads gives it none: projects only.
+        let codex = pickerThreads(app: .codex) { threads }
+        XCTAssertEqual(popupRows(threads: codex, entries: entries, detectedRoot: "/w/x-eta",
+                                 current: .newThread(root: "/w/x-zeta"), query: "", now: now, app: .codex),
+                       [.header("Start Codex in")] + ["eta", "gamma", "zeta", "alpha", "beta"].map(projectItem)
+                           + [.addFolder])
+        XCTAssertEqual(projectsHeader(app: .command), "New thread in")
+        XCTAssertEqual(projectsHeader(app: .claudeCode), "Start Claude Code in")
+        XCTAssertEqual(popupPlaceholder(app: .command), "Search threads and projects")
+        XCTAssertEqual(popupPlaceholder(app: .cursorAgent), "Search projects")
+    }
+
+    func testPickerThreadsOnlyForTheCommand() {
+        var loads = 0
+        func load() -> [OpenThread] { loads += 1; return threads }
+        XCTAssertEqual(pickerThreads(app: .command, load: load), threads)
+        XCTAssertEqual(loads, 1)
+        for app in Target.allCases where app != .command {
+            XCTAssertEqual(pickerThreads(app: app, load: load), [], app.title)
+        }
+        XCTAssertEqual(loads, 1, "T3's database is not read for other targets")
+        XCTAssertTrue(Target.command.addsToThreads)
+        XCTAssertFalse(Target.claudeCode.addsToThreads)
+    }
+
+    func testRememberedThreadFallsBackForOtherTargets() {
+        let last = LastTarget(target: .thread(id: "1"), at: now.addingTimeInterval(-60))
+        let codexThreads = pickerThreads(app: .codex) { threads }
+        let remembered = rememberedTarget(last, minutes: 15, now: now, threads: codexThreads, entries: entries)
+        XCTAssertNil(remembered)
+        XCTAssertEqual(resolveTarget(picked: nil, remembered: remembered, detectedRoot: "/w/x-eta",
+                                     entries: entries, defaultRoot: "/w/default"),
+                       .newThread(root: "/w/x-eta"), "the project, not the thread")
+        let t3Threads = pickerThreads(app: .command) { threads }
+        XCTAssertEqual(rememberedTarget(last, minutes: 15, now: now, threads: t3Threads, entries: entries),
+                       .thread(id: "1"))
+    }
+
+    func testSendArguments() {
+        let project = sendArguments(.newThread(root: "/w/a"), app: .codex, defaultRoot: "/w/d")
+        XCTAssertEqual(project.cwd, "/w/a")
+        XCTAssertNil(project.thread)
+        let toThread = sendArguments(.thread(id: "1"), app: .command, defaultRoot: "/w/d")
+        XCTAssertEqual(toThread.cwd, "/w/d")
+        XCTAssertEqual(toThread.thread, "1")
+        let noThread = sendArguments(.thread(id: "1"), app: .claudeCode, defaultRoot: "/w/d")
+        XCTAssertEqual(noThread.cwd, "/w/d")
+        XCTAssertNil(noThread.thread, "only the custom command takes --thread")
+    }
+
+    func testAddFolderRow() {
+        let r = rows()
+        let last = r.count - 1
+        XCTAssertEqual(r[last], .addFolder)
+        XCTAssertEqual(popupChoice(r, at: last), .addFolder)
+        XCTAssertNil(popupTarget(r, at: last), "it is not a target")
+        XCTAssertEqual(popupChoice(r, at: 1), .target(.thread(id: "1")))
+        XCTAssertNil(popupChoice(r, at: 0))
+        XCTAssertNil(popupChoice(r, at: nil))
+        XCTAssertEqual(movedSelection(r, from: last - 1, by: 1), last, "Down reaches it")
+        let none: [PopupRow] = [.header("No match"), .addFolder]
+        XCTAssertNil(popupSelection(none, current: nil), "never selected for you")
+        XCTAssertEqual(movedSelection(none, from: nil, by: 1), 1)
+        XCTAssertEqual(addFolderTitle, "Add project folder…")
+        XCTAssertFalse(addFolderToolTip.isEmpty)
+    }
+
+    func testAddedFolderTarget() {
+        XCTAssertEqual(addedFolderTarget(["/w/x-beta/", "/w/x-eta"], entries: entries),
+                       .newThread(root: "/w/x-beta"), "the first chosen, as the list has it")
+        XCTAssertNil(addedFolderTarget([], entries: entries), "cancelled: keep the target")
+        XCTAssertNil(addedFolderTarget(["/w/unlisted"], entries: entries))
     }
 
     func testPopupSelection() {
@@ -129,10 +207,10 @@ final class TargetPickerTests: XCTestCase {
     }
 
     func testMovedSelection() {
-        let r = rows()  // headers at 0 and 3, items 1, 2, 4...8
+        let r = rows()  // headers at 0 and 3, items 1, 2, 4...8, the add row at 9
         XCTAssertEqual(movedSelection(r, from: 2, by: 1), 4, "skips the header")
         XCTAssertEqual(movedSelection(r, from: 4, by: -1), 2)
-        XCTAssertEqual(movedSelection(r, from: 8, by: 1), 8, "stays at the end")
+        XCTAssertEqual(movedSelection(r, from: 9, by: 1), 9, "stays at the end")
         XCTAssertEqual(movedSelection(r, from: 1, by: -1), 1, "stays at the start")
         XCTAssertEqual(movedSelection(r, from: nil, by: 1), 1)
         XCTAssertEqual(movedSelection(r, from: 0, by: 1), 1, "from a header: the first item")
@@ -235,6 +313,8 @@ final class TargetPickerTests: XCTestCase {
         XCTAssertEqual(other.label, "+ other")
         XCTAssertFalse(other.toThread)
         XCTAssertEqual(other.toolTip, "New thread in /w/other (Tab to change)")
+        XCTAssertEqual(targetChip(.newThread(root: "/w/a"), threads: threads, entries: entries, app: .codex).toolTip,
+                       "Starts Codex in /w/a (Tab to change)")
         let long = String(repeating: "y", count: threadTitleChars + 5)
         XCTAssertEqual(targetChip(.thread(id: "2"), threads: [OpenThread(id: "2", title: long, project: "app")],
                                   entries: entries).label, "→ " + cutTitle(long))
@@ -242,7 +322,10 @@ final class TargetPickerTests: XCTestCase {
 
     func testTargetHint() {
         XCTAssertEqual(targetHint(hasPicker: true), "↩ send · ⇥ change")
-        XCTAssertEqual(targetHint(hasPicker: false), "↩ new T3 thread · esc dismiss")
+        XCTAssertEqual(targetHint(hasPicker: false), "↩ new thread · esc dismiss")
+        XCTAssertEqual(targetHint(hasPicker: true, app: .codex), "↩ send · ⇥ change")
+        XCTAssertEqual(targetHint(hasPicker: false, app: .claudeApp), "↩ Claude app · esc dismiss")
+        XCTAssertEqual(targetHint(hasPicker: false, app: .clipboard), "↩ Clipboard · esc dismiss")
     }
 
     func testSendOutcome() {

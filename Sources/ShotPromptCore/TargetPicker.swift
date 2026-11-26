@@ -47,17 +47,45 @@ public enum PopupRow: Equatable {
     // A section title; it cannot be picked.
     case header(String)
     case item(PopupItem)
+    // The last row: choose folders to add to the projects.
+    case addFolder
+}
+
+public let addFolderTitle = "Add project folder…"
+public let addFolderToolTip = "Choose folders to list here; the ones you send to are added on their own."
+
+// What picking a row does: send there, or add a folder.
+public enum PopupChoice: Equatable {
+    case target(SendTarget)
+    case addFolder
+}
+
+// The threads the picker offers: T3's open threads when the target can add
+// to one, else none, so a remembered thread falls back to a project. `load`
+// runs only when they are wanted.
+public func pickerThreads(app: Target, load: () -> [OpenThread]) -> [OpenThread] {
+    app.addsToThreads ? load() : []
+}
+
+// The title over the projects: T3 opens a new thread, the others start in the folder.
+public func projectsHeader(app: Target) -> String {
+    app == .command ? "New thread in" : "Start \(app.title) in"
+}
+
+public func popupPlaceholder(app: Target) -> String {
+    app.addsToThreads ? "Search threads and projects" : "Search projects"
 }
 
 // How many projects the popup lists before you type.
 public let maxPopupProjects = 5
 
-// The popup: open threads first, then projects for a new thread. Before you
-// type, the projects are the detected one, the default, the current target's
-// and then the rest, cut to maxPopupProjects; typing searches all projects in
-// that same order. A section with no rows has no header.
+// The popup: open threads first, then projects for a new thread, then the
+// row that adds a folder. Before you type, the projects are the detected one,
+// the default, the current target's and then the rest, cut to
+// maxPopupProjects; typing searches all projects in that same order. A
+// section with no rows has no header.
 public func popupRows(threads: [OpenThread], entries: [PickerEntry], detectedRoot: String?,
-                      current: SendTarget, query: String, now: Date) -> [PopupRow] {
+                      current: SendTarget, query: String, now: Date, app: Target = .command) -> [PopupRow] {
     let threadRows = threads.filter { matchesQuery(query, fields: [$0.title, $0.project]) }.map {
         PopupRow.item(PopupItem(target: .thread(id: $0.id), title: $0.title, detail: threadDetail($0, now: now),
                                 toolTip: "\($0.title) · \($0.project)"))
@@ -81,22 +109,23 @@ public func popupRows(threads: [OpenThread], entries: [PickerEntry], detectedRoo
     }
     var rows: [PopupRow] = []
     if !threadRows.isEmpty { rows += [.header("Add to an open thread")] + threadRows }
-    if !projectRows.isEmpty { rows += [.header("New thread in")] + projectRows }
-    return rows.isEmpty ? [.header("No match")] : rows
+    if !projectRows.isEmpty { rows += [.header(projectsHeader(app: app))] + projectRows }
+    return (rows.isEmpty ? [.header("No match")] : rows) + [.addFolder]
 }
 
 // The indexes of the rows that can be picked.
 func itemIndexes(_ rows: [PopupRow]) -> [Int] {
     rows.indices.filter {
-        if case .item = rows[$0] { return true }
-        return false
+        if case .header = rows[$0] { return false }
+        return true
     }
 }
 
-// The row to select: the current target's, else the first item.
+// The row to select: the current target's, else the first target. The add
+// row is never selected for you, so Enter on "No match" adds nothing.
 public func popupSelection(_ rows: [PopupRow], current: SendTarget?) -> Int? {
-    let items = itemIndexes(rows)
-    return items.first { popupTarget(rows, at: $0) == current } ?? items.first
+    let targets = itemIndexes(rows).filter { popupTarget(rows, at: $0) != nil }
+    return targets.first { current != nil && popupTarget(rows, at: $0) == current } ?? targets.first
 }
 
 // Up and Down move between items, skipping headers, and stop at either end.
@@ -108,8 +137,34 @@ public func movedSelection(_ rows: [PopupRow], from index: Int?, by delta: Int) 
 }
 
 public func popupTarget(_ rows: [PopupRow], at index: Int?) -> SendTarget? {
-    guard let i = index, rows.indices.contains(i), case .item(let item) = rows[i] else { return nil }
-    return item.target
+    guard case .target(let t) = popupChoice(rows, at: index) else { return nil }
+    return t
+}
+
+public func popupChoice(_ rows: [PopupRow], at index: Int?) -> PopupChoice? {
+    guard let i = index, rows.indices.contains(i) else { return nil }
+    switch rows[i] {
+    case .header: return nil
+    case .item(let item): return .target(item.target)
+    case .addFolder: return .addFolder
+    }
+}
+
+// After "Add project folder…": the first folder you chose, as the projects
+// list it, or nil when you chose none (the target stays as it was).
+public func addedFolderTarget(_ added: [String], entries: [PickerEntry]) -> SendTarget? {
+    guard let first = added.first.map({ ($0 as NSString).standardizingPath }),
+          let entry = entries.first(where: { ($0.root as NSString).standardizingPath == first }) else { return nil }
+    return .newThread(root: entry.root)
+}
+
+// The folder and thread a send goes to. A thread only reaches the custom
+// command; any other target starts in the default folder.
+public func sendArguments(_ target: SendTarget, app: Target, defaultRoot: String) -> (cwd: String, thread: String?) {
+    switch target {
+    case .newThread(let root): return (root, nil)
+    case .thread(let id): return (defaultRoot, app.addsToThreads ? id : nil)
+    }
 }
 
 public enum PopupCommand: Equatable {
@@ -197,7 +252,8 @@ public struct TargetChip: Equatable {
     public let toolTip: String
 }
 
-public func targetChip(_ target: SendTarget, threads: [OpenThread], entries: [PickerEntry]) -> TargetChip {
+public func targetChip(_ target: SendTarget, threads: [OpenThread], entries: [PickerEntry],
+                       app: Target = .command) -> TargetChip {
     switch target {
     case .thread(let id):
         guard let t = threads.first(where: { $0.id == id }) else {
@@ -209,13 +265,16 @@ public func targetChip(_ target: SendTarget, threads: [OpenThread], entries: [Pi
         let entry = entries.first { $0.root == root }
         let name = entry?.name ?? (root as NSString).lastPathComponent
         let folder = entry?.toolTip ?? (root as NSString).abbreviatingWithTildeInPath
-        return TargetChip(label: "+ \(name)", toThread: false, toolTip: "New thread in \(folder) (Tab to change)")
+        let action = app == .command ? "New thread in" : "Starts \(app.title) in"
+        return TargetChip(label: "+ \(name)", toThread: false, toolTip: "\(action) \(folder) (Tab to change)")
     }
 }
 
-// The hint next to the gear; the chip says where Enter sends.
-public func targetHint(hasPicker: Bool) -> String {
-    hasPicker ? "↩ send · ⇥ change" : "↩ new T3 thread · esc dismiss"
+// The hint next to the gear; the chip says where Enter sends. A target with
+// no project (a chat app, the clipboard) has no chip, so the hint names it.
+public func targetHint(hasPicker: Bool, app: Target = .command) -> String {
+    let name = app == .command ? "new thread" : app.title
+    return hasPicker ? "↩ send · ⇥ change" : "↩ \(name) · esc dismiss"
 }
 
 // How long "✓ Added to" shows before the panel closes.
