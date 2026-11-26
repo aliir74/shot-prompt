@@ -75,4 +75,27 @@ final class LayoutTests: XCTestCase {
                        Fade(top: true, bottom: false, edge: 24.0 / 108), "at the bottom")
         XCTAssertEqual(fade(visible: .zero, documentHeight: 0, scrolls: false).edge, 0.5, "zero height")
     }
+
+    func testPopupHeight() {
+        let item = PopupRow.item(PopupItem(target: .thread(id: "1"), title: "t", detail: "", toolTip: ""))
+        XCTAssertEqual(popupHeight([.header("a"), item, item, .header("b"), item]), 34 + (2 * 22 + 3 * 24) + 8)
+        XCTAssertEqual(popupHeight([.header("a"), item, item, .header("b"), item]), 158)
+        XCTAssertEqual(popupHeight([]), 42)
+        XCTAssertEqual(popupHeight(Array(repeating: item, count: 20)), 34 + 420 + 8, "the list caps and scrolls")
+        XCTAssertLessThanOrEqual(2 * PopupMetrics.headerHeight + 15 * PopupMetrics.rowHeight, PopupMetrics.maxListHeight)
+        XCTAssertEqual(PopupMetrics.padding, 8)
+        XCTAssertEqual(PopupMetrics.gap, 4)
+    }
+
+    func testPopupFrame() {
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        XCTAssertEqual(popupFrame(panel: CGRect(x: 100, y: 500, width: 420, height: 84), height: 200, visible: visible),
+                       CGRect(x: 100, y: 296, width: 420, height: 200), "under the panel")
+        XCTAssertEqual(popupFrame(panel: CGRect(x: 100, y: 150, width: 420, height: 84), height: 200, visible: visible),
+                       CGRect(x: 100, y: 238, width: 420, height: 200), "above it near the bottom of the screen")
+        // Room neither under nor above: kept on the screen.
+        XCTAssertEqual(popupFrame(panel: CGRect(x: 1300, y: 100, width: 420, height: 84), height: 200,
+                                  visible: CGRect(x: 0, y: 0, width: 1440, height: 300)),
+                       CGRect(x: 1012, y: 92, width: 420, height: 200))
+    }
 }

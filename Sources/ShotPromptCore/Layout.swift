@@ -72,6 +72,35 @@ public func statusLayout(containerWidth: CGFloat, titleWidth: CGFloat, hintMinX:
                         hintWidth: max(right - pw - hintMinX - 4, 0))
 }
 
+public enum PopupMetrics {
+    public static let rowHeight: CGFloat = 24
+    public static let headerHeight: CGFloat = 22
+    public static let searchHeight: CGFloat = 34
+    // Fits 2 headers and 15 items, the unfiltered list, without scrolling.
+    public static let maxListHeight: CGFloat = 420
+    public static let padding: CGFloat = 8
+    // Space between the panel and the popup.
+    public static let gap: CGFloat = 4
+}
+
+// The search field, the rows (scrolling past maxListHeight) and padding.
+public func popupHeight(_ rows: [PopupRow]) -> CGFloat {
+    let list = rows.reduce(CGFloat(0)) { sum, row in
+        if case .header = row { return sum + PopupMetrics.headerHeight }
+        return sum + PopupMetrics.rowHeight
+    }
+    return PopupMetrics.searchHeight + min(list, PopupMetrics.maxListHeight) + PopupMetrics.padding
+}
+
+// The popup hangs under the panel, as wide as it; above it when there is no
+// room below; always kept on the screen.
+public func popupFrame(panel: CGRect, height: CGFloat, visible: CGRect) -> CGRect {
+    var y = panel.minY - PopupMetrics.gap - height
+    if y < visible.minY + 8 { y = panel.maxY + PopupMetrics.gap }
+    let size = CGSize(width: panel.width, height: height)
+    return CGRect(origin: clamp(origin: CGPoint(x: panel.minX, y: y), size: size, in: visible), size: size)
+}
+
 public struct Fade: Equatable {
     // Fade the top edge: text is hidden above.
     public let top: Bool

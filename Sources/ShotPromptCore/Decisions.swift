@@ -31,6 +31,8 @@ public enum KeyAction: Equatable {
     case dismiss
     // Open the prompt and type the key into it.
     case expandAndType
+    // Close only the target popup; the panel stays.
+    case closePopup
 }
 
 // Esc closes. On the icon, Cmd/Ctrl (Cmd+V into another app) means the
@@ -38,9 +40,11 @@ public enum KeyAction: Equatable {
 // the icon opens the prompt and becomes its first character. In the open
 // panel, Cmd/Ctrl shortcuts edit the prompt (Cmd+V, Cmd+A), even before any
 // typing. Keys for other windows, or while the picker menu is open, pass.
-public func keyAction(isOurs: Bool, isEscape: Bool, commandOrControl: Bool, onIcon: Bool) -> KeyAction {
+// With the target popup open, Esc closes the popup first.
+public func keyAction(isOurs: Bool, isEscape: Bool, commandOrControl: Bool, onIcon: Bool,
+                      popupOpen: Bool = false) -> KeyAction {
     guard isOurs else { return .pass }
-    if isEscape { return .dismiss }
+    if isEscape { return popupOpen ? .closePopup : .dismiss }
     guard onIcon else { return .pass }
     return commandOrControl ? .dismiss : .expandAndType
 }

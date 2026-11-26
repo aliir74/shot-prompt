@@ -116,4 +116,15 @@ final class DecisionTests: XCTestCase {
         XCTAssertEqual(maxPromptLines, 6)
         XCTAssertEqual(dictationGraceSeconds, 10)
     }
+
+    func testKeyActionWithPopup() {
+        XCTAssertEqual(keyAction(isOurs: true, isEscape: true, commandOrControl: false, onIcon: false, popupOpen: true),
+                       .closePopup, "the first Esc closes only the popup")
+        XCTAssertEqual(keyAction(isOurs: true, isEscape: true, commandOrControl: false, onIcon: false, popupOpen: false),
+                       .dismiss)
+        XCTAssertEqual(keyAction(isOurs: true, isEscape: false, commandOrControl: false, onIcon: false, popupOpen: true),
+                       .pass)
+        XCTAssertEqual(keyAction(isOurs: true, isEscape: false, commandOrControl: true, onIcon: false, popupOpen: true),
+                       .pass)
+    }
 }

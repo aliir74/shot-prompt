@@ -637,6 +637,7 @@ final class Controller: NSObject, NSTextViewDelegate {
                 self.expand()
                 self.field?.keyDown(with: event)
                 return nil
+            case .closePopup: return event
             }
         }
         fnMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in

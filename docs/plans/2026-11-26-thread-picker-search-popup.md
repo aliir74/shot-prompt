@@ -45,7 +45,7 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
 
 ### Task 1.3: Popup rows, selection and keys
 **Files:** Modify: `Sources/ShotPromptCore/TargetPicker.swift`, `Sources/ShotPromptCore/Decisions.swift`, `Sources/ShotPromptCore/Layout.swift`, `Sources/ShotPrompt/main.swift` (one placeholder line), `Tests/ShotPromptCoreTests/TargetPickerTests.swift`, `Tests/ShotPromptCoreTests/DecisionTests.swift`, `Tests/ShotPromptCoreTests/LayoutTests.swift`
-- [ ] Write failing tests (build entries with `pickerEntries(projects:defaultRoot:)` over 8 projects):
+- [x] Write failing tests (build entries with `pickerEntries(projects:defaultRoot:)` over 8 projects):
   - `popupRows`, empty query: `.header("Add to an open thread")`, one `.item` per thread (`target: .thread(id:)`, `title` = full thread title, `detail` = `threadDetail`, `toolTip` = `"<title> · <project>"`), `.header("New thread in")`, then exactly 5 project items (`target: .newThread(root:)`, `title` = entry name, `detail` = `""`, `toolTip` = entry toolTip).
   - Project order: detected root first, then the default (entries' first), then the current target's project when the current target is a project, then the remaining entries in their order; no duplicates (detected == default still gives 5 distinct rows); `detectedRoot: nil` puts the default first.
   - With a query: every matching project is listed (more than 5 possible), in the same priority order (detected, default, current) and then the rest in entry order (test the order), matched on `[entry.name, folder name of entry.root]`; threads are matched on `[title, project]`; a section with no rows has no header; nothing at all gives `[.header("No match")]`. No threads gives only the "New thread in" section.
@@ -57,8 +57,8 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
   - `chipClickToggles(closedAt:now:)`: true for nil and for a close 1 s ago; false for a close 0.1 s ago. `popupReopenGuardSeconds == 0.3`.
   - `popupHeight`: 2 headers + 3 items → `34 + (2*22 + 3*24) + 8 = 158`; no rows → 42; 20 items → `34 + 420 + 8 = 462` (the list caps at 420, which fits the unfiltered 2 headers + 15 items = 404 without scrolling).
   - `popupFrame(panel: CGRect(x: 100, y: 500, width: 420, height: 84), height: 200, visible: CGRect(x: 0, y: 0, width: 1440, height: 900))` → `CGRect(x: 100, y: 296, width: 420, height: 200)`; the same with panel `y: 150` → above the panel: `CGRect(x: 100, y: 238, width: 420, height: 200)`.
-- [ ] Run `swift test --filter 'TargetPickerTests|DecisionTests|LayoutTests'`, see red.
-- [ ] Implement in `TargetPicker.swift`:
+- [x] Run `swift test --filter 'TargetPickerTests|DecisionTests|LayoutTests'`, see red.
+- [x] Implement in `TargetPicker.swift`:
   - `public struct PopupItem: Equatable { public let target: SendTarget; public let title: String; public let detail: String; public let toolTip: String }`
   - `public enum PopupRow: Equatable { case header(String); case item(PopupItem) }`
   - `public let maxPopupProjects = 5`
@@ -68,10 +68,10 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
   - `public func popupTarget(_ rows: [PopupRow], at index: Int?) -> SendTarget?`
   - `public enum PopupCommand: Equatable { case up, down, pick, close, none }` and `public func popupCommand(_ selector: String) -> PopupCommand`
   - `public let popupReopenGuardSeconds: TimeInterval = 0.3` and `public func chipClickToggles(closedAt: Date?, now: Date) -> Bool` (a click on the chip first takes the keys from the popup, which closes it; the same click must not open it again)
-- [ ] Implement in `Decisions.swift`: add `case closePopup` to `KeyAction` and a trailing `popupOpen: Bool = false` parameter to `keyAction`; Esc returns `.closePopup` when `popupOpen`, else `.dismiss`. (`main.swift`'s switch over `KeyAction` needs a `case .closePopup: return event` placeholder so it still compiles; Task 2.3 replaces it.)
-- [ ] Implement in `Layout.swift`: `public enum PopupMetrics { rowHeight = 24, headerHeight = 22, searchHeight = 34, maxListHeight = 420, padding = 8, gap = 4 }`, `public func popupHeight(_ rows: [PopupRow]) -> CGFloat`, `public func popupFrame(panel: CGRect, height: CGFloat, visible: CGRect) -> CGRect` (under the panel with `gap`; above it when the bottom would pass `visible.minY + 8`; finally `clamp` it into `visible` so it never leaves the screen).
-- [ ] Verify: `swift test --filter 'TargetPickerTests|DecisionTests|LayoutTests'` → pass; `swift build` → `Build complete!`.
-- [ ] Commit: `Build the target popup's rows, selection and key commands`
+- [x] Implement in `Decisions.swift`: add `case closePopup` to `KeyAction` and a trailing `popupOpen: Bool = false` parameter to `keyAction`; Esc returns `.closePopup` when `popupOpen`, else `.dismiss`. (`main.swift`'s switch over `KeyAction` needs a `case .closePopup: return event` placeholder so it still compiles; Task 2.3 replaces it.)
+- [x] Implement in `Layout.swift`: `public enum PopupMetrics { rowHeight = 24, headerHeight = 22, searchHeight = 34, maxListHeight = 420, padding = 8, gap = 4 }`, `public func popupHeight(_ rows: [PopupRow]) -> CGFloat`, `public func popupFrame(panel: CGRect, height: CGFloat, visible: CGRect) -> CGRect` (under the panel with `gap`; above it when the bottom would pass `visible.minY + 8`; finally `clamp` it into `visible` so it never leaves the screen).
+- [x] Verify: `swift test --filter 'TargetPickerTests|DecisionTests|LayoutTests'` → pass; `swift build` → `Build complete!`.
+- [x] Commit: `Build the target popup's rows, selection and key commands`
 
 ### Task 1.4: Remembered target and target resolution
 **Files:** Modify: `Sources/ShotPromptCore/TargetPicker.swift`, `Tests/ShotPromptCoreTests/TargetPickerTests.swift`
