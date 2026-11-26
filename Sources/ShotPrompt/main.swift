@@ -112,7 +112,8 @@ func chooseProjectFolders() -> [String] {
 }
 
 func defaultFolder() -> String {
-    startFolder(environment: config.cwdFromEnvironment, recent: recentFolders, home: config.home)
+    startFolder(environment: config.cwdFromEnvironment, recent: recentFolders, home: config.home,
+                lastTargetMinutes: lastTargetMinutes(UserDefaults.standard.object(forKey: lastTargetMinutesKey)))
 }
 
 // Screenshots copied for a CLI or chat app to read after the panel is gone; kept a day.
@@ -840,6 +841,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         if let w = window {
             context = removedKinds.reduce(buildContext(w, settings: settings)) { $0.removing($1) }
         }
+        // The start folder follows the remembered-target setting, so the
+        // popup's first project and the start target follow a change to it.
+        if panel != nil { entries = pickerEntries(projects: projects, defaultRoot: defaultFolder()) }
         applyContext()
     }
 
