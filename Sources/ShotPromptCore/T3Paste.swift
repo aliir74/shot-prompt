@@ -20,7 +20,7 @@ public func isT3(_ bundleID: String?) -> Bool {
 // Shottr comes forward around a capture, and this app for the picker. Neither
 // is the app the capture was taken in.
 public func isBystander(bundleID: String?, isSelf: Bool) -> Bool {
-    isSelf || bundleID == shottrBundleID
+    isSelf || isCaptureTool(bundleID)
 }
 
 // The app the capture was taken in: the front app, or the last other app to

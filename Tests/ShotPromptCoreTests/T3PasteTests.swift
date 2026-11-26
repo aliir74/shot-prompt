@@ -14,6 +14,8 @@ final class T3PasteTests: XCTestCase {
 
     func testIsBystander() {
         XCTAssertTrue(isBystander(bundleID: shottrBundleID, isSelf: false))
+        XCTAssertTrue(isBystander(bundleID: "com.apple.screencaptureui", isSelf: false), "macOS's capture overlay")
+        XCTAssertTrue(isBystander(bundleID: "com.apple.screenshot.launcher", isSelf: false), "the Screenshot app")
         XCTAssertTrue(isBystander(bundleID: nil, isSelf: true), "this app, run unbundled")
         XCTAssertFalse(isBystander(bundleID: t3BundleID, isSelf: false))
         XCTAssertFalse(isBystander(bundleID: nil, isSelf: false))

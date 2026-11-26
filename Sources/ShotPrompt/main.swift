@@ -1,9 +1,10 @@
-// ShotPrompt: take a Shottr capture, start typing, and the screenshot plus
+// ShotPrompt: take a screenshot (macOS's own or Shottr's), start typing, and the screenshot plus
 // your words open as a new T3 Code thread. The todo board's "hover a card and
 // type" launcher, for screenshots.
 //
-// Shottr saves every capture to ~/Pictures as SCR-*.png ("Save after capture" on).
-// A new file there pops a small thumbnail icon by the mouse, which is where
+// macOS saves its captures to the Desktop (or the screencapture "location"),
+// Shottr to ~/Pictures as SCR-*.png ("Save after capture" on); both tag the
+// file as a screen capture. A new one in either folder pops a small thumbnail icon by the mouse, which is where
 // the capture region ended. Typing, or clicking the icon, opens the prompt
 // panel. Both are non-activating: they take the keyboard without bringing this
 // app forward, so no Accessibility or Input Monitoring permission is needed.
@@ -38,7 +39,8 @@ import ShotPromptCore
 let settingsChangedNotification = Notification.Name("ShotPromptSettingsChanged")
 
 let config = Config(environment: ProcessInfo.processInfo.environment,
-                    home: FileManager.default.homeDirectoryForCurrentUser)
+                    home: FileManager.default.homeDirectoryForCurrentUser,
+                    screenshotLocation: UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location"))
 
 final class PromptPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -113,7 +115,7 @@ final class TopClipView: NSClipView {
 }
 
 final class Controller: NSObject, NSTextViewDelegate {
-    private let watcher = CaptureWatcher(directory: config.captureDir)
+    private let watchers = config.captureDirs.map { CaptureWatcher(directory: $0) }
     private var icon: PromptPanel?
     private var panel: PromptPanel?
     private var field: PromptTextView?
@@ -175,8 +177,11 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var mouseMonitor: Any?
 
     func start() {
-        watcher.onCapture = { [weak self] url in self?.show(url) }
-        do { try watcher.start() } catch { fatalError("cannot watch \(config.captureDir.path)") }
+        for watcher in watchers {
+            watcher.onCapture = { [weak self] url in self?.show(url) }
+            // A folder that is missing, or that macOS keeps from this app, is skipped.
+            do { try watcher.start() } catch { NSLog("ShotPrompt: cannot watch %@", watcher.directory.path) }
+        }
         lastApp = NSWorkspace.shared.frontmostApplication.flatMap { Self.bystander($0) ? nil : $0 }
         lastAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -227,9 +232,11 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
     }
 
-    // Where the capture was on screen (top-left coordinates), from the last
-    // drag, when its size matches the image. Nil for window and fullscreen captures.
+    // Where the capture was on screen (top-left coordinates): macOS's captures
+    // say so; for others, the last drag when its size matches the image. Nil
+    // for other window and fullscreen captures.
     private func captureRegion(of url: URL) -> CGRect? {
+        if let rect = captureRect(attribute: extendedAttribute(screenCaptureRectAttribute, of: url)) { return rect }
         guard let up = mouseUp, let pixels = pixelSize(of: url),
               let primary = NSScreen.screens.first else { return nil }
         let screen = NSScreen.screens.first { $0.frame.contains(up.point) } ?? primary

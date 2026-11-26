@@ -95,6 +95,7 @@ final class DecisionTests: XCTestCase {
         XCTAssertEqual(act(panel: true, icon: true), .dismissIfEmpty)
         XCTAssertEqual(act(icon: true), .shortenIcon(iconAwaySeconds))
         XCTAssertEqual(act(bundle: shottrBundleID, icon: true), .none, "Shottr around a capture")
+        XCTAssertEqual(act(bundle: "com.apple.screencaptureui", icon: true), .none, "macOS's capture overlay")
         XCTAssertEqual(act(icon: true, left: iconAwaySeconds), .none, "already leaving soon enough")
         XCTAssertEqual(act(), .none, "nothing on screen")
         XCTAssertEqual(act(panel: true, dictating: true), .none, "Wispr Flow coming forward while you talk")

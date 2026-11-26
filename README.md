@@ -3,9 +3,9 @@
 [![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/aliir74)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/aliir74)
 
-Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
+Take a screenshot (macOS's own Cmd+Shift+4, or [Shottr](https://shottr.cc)), start typing (or click the icon), press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
 
-- Watches `~/Pictures` for new `SCR-*.png` or `.jpeg` files (turn on Shottr's "save after capture").
+- Watches the folder macOS saves screenshots to (the Desktop, or what you set in the Screenshot app's Options) and `~/Pictures` for Shottr (turn on its "save after capture"). A new PNG or JPEG counts when it is tagged as a screen capture (macOS and Shottr both tag their files) and was made in the last minute, so an old screenshot moved in does not. macOS asks once for access to the Desktop folder. With the floating thumbnail on, macOS saves the file when the thumbnail goes, so swipe it away for the icon to come at once.
 - Shows a small thumbnail icon by the mouse, where the capture region ended. Typing, or clicking the icon, opens the prompt panel. Both take the keyboard without bringing the app forward. No Input Monitoring permission is needed. Accessibility is optional: the window title, page address and project pick in [context](#context-and-privacy), and the [paste into T3](#paste-into-t3) setting, need it.
 - The icon leaves 3 seconds after you switch to another app, so you can still click it on the way. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
 - Each capture also sends where it came from (app, window title, page address or file), shown as chips you can remove before sending. See [Context and privacy](#context-and-privacy).
@@ -69,7 +69,7 @@ defaults write io.github.aliir74.shot-prompt pasteIntoT3 -bool false   # off
 
 It is read at every capture, so no restart is needed. How it works:
 
-- Shottr is in front during a capture, so the app the capture was taken in is the last other app that came forward.
+- The capture tool (Shottr, or macOS's capture overlay) can be in front during a capture, so the app the capture was taken in is the last other app that came forward.
 - The capture goes on the clipboard (as PNG), T3's chat composer takes the focus through the macOS Accessibility API, and Cmd+V goes to T3. When text comes before the caret and does not already end a line, Shift+Enter goes first, so the screenshot sits on its own line below what you typed. Focusing the composer first matters: T3 drops a pasted image when the focus is elsewhere, for example after you select text in the chat or in an HTML render.
 - This drives another app, so ShotPrompt needs Accessibility (System Settings > Privacy & Security > Accessibility). macOS asks the first time. Until you allow it, or when T3 shows no chat to paste into, the capture gets the icon as usual.
 
@@ -83,7 +83,7 @@ ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userda
 SHOT_PROMPT_CWD=~/my/project SHOT_PROMPT_DISPATCH=~/bin/t3-dispatch ./build.sh
 ```
 
-This builds `~/Applications/ShotPrompt.app` and loads the `io.github.aliir74.shot-prompt` LaunchAgent (starts at login, restarts if it dies). A rebuild keeps the installed agent's `SHOT_PROMPT_CWD` and `SHOT_PROMPT_DISPATCH` unless you set them again. First-install defaults: `SHOT_PROMPT_CWD=$HOME`, `SHOT_PROMPT_DISPATCH=~/.local/bin/t3-dispatch`, `SHOT_PROMPT_CAPTURE_DIR=~/Pictures`. Log: `/tmp/shot-prompt.log`.
+This builds `~/Applications/ShotPrompt.app` and loads the `io.github.aliir74.shot-prompt` LaunchAgent (starts at login, restarts if it dies). A rebuild keeps the installed agent's `SHOT_PROMPT_CWD` and `SHOT_PROMPT_DISPATCH` unless you set them again. First-install defaults: `SHOT_PROMPT_CWD=$HOME`, `SHOT_PROMPT_DISPATCH=~/.local/bin/t3-dispatch`, `SHOT_PROMPT_CAPTURE_DIR=~/Pictures` (Shottr's folder; macOS's own is always watched too). Log: `/tmp/shot-prompt.log`.
 
 The app is ad-hoc signed with a designated requirement of just its bundle ID, so macOS keeps folder-access grants (for example Downloads, when the dispatch command lives there) across rebuilds. The tradeoff: any ad-hoc binary with the same bundle ID would match those grants too.
 
@@ -100,7 +100,7 @@ scripts/coverage.sh      # run them with coverage; fails below 100% of lines
 
 The code is a Swift package with two targets:
 
-- `Sources/ShotPromptCore`: everything that decides something. Capture detection and the wait for Shottr to finish writing, the T3 project list from SQLite (ordering, archived/deleted and missing-folder filtering), the picker list (default project first, parent folder on duplicate titles), what Esc, Cmd/Ctrl, Tab, Enter and app switches do, panel and prompt sizing, the scroll fade, running the dispatch command, and for the paste into T3: which app a capture was taken in, finding T3's composer in its accessibility tree, and the capture as PNG. `scripts/coverage.sh` requires every line here to be covered.
+- `Sources/ShotPromptCore`: everything that decides something. Capture detection (the screen-capture tag, the folders, the native capture's on-screen rect) and the wait for the file to be fully written, the T3 project list from SQLite (ordering, archived/deleted and missing-folder filtering), the picker list (default project first, parent folder on duplicate titles), what Esc, Cmd/Ctrl, Tab, Enter and app switches do, panel and prompt sizing, the scroll fade, running the dispatch command, and for the paste into T3: which app a capture was taken in, finding T3's composer in its accessibility tree, and the capture as PNG. `scripts/coverage.sh` requires every line here to be covered.
 Core also holds the capture context: the settings and their defaults, URL and title cleaning, the `<capture-context>` block, the chips and their layout, the project match, the capture's place from the drag, the element description, the window pick and the red outline, and the `Images:` line. Core also holds the iPhone receiver: HTTP and multipart parsing, the `/projects` and `/shot` routes, the `@project` prefix, and the loopback listener (tested over real sockets).
 - `Sources/ShotPrompt/main.swift`: the AppKit shell, excluded from the threshold. It holds the panel and view subclasses, the window setup and teardown in `Controller`, the key monitor, timers, notification observers, the Accessibility calls (Cmd+V for the paste into T3, and reading the captured window), the chips and the settings menu, and the run loop. Each of these needs a window server and real AppKit events, so it calls into Core for every decision and only applies the result to windows and views.
 
