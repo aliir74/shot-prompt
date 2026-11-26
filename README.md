@@ -98,7 +98,7 @@ ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userda
 
 ## Install
 
-**Download:** get `ShotPrompt-<version>.dmg` from the [latest release](https://github.com/aliir74/shot-prompt/releases/latest), open it, and drag ShotPrompt to Applications. Open it once: it starts at login from then on (turn that off in its menu), and the welcome note says where your screenshots will go. Until releases are notarized, macOS blocks the first open: click Done, then **System Settings > Privacy & Security > Open Anyway**.
+**Download:** get `ShotPrompt-<version>.dmg` from the [latest release](https://github.com/aliir74/shot-prompt/releases/latest), open it, and drag ShotPrompt to Applications. Open it once: it starts at login from then on (turn that off in its menu), and the welcome note says where your screenshots will go. Until releases are notarized, macOS blocks the first open because Apple has not checked the app: click Done, then **System Settings > Privacy & Security > Open Anyway**. If macOS says the app is damaged instead, run `xattr -dr com.apple.quarantine /Applications/ShotPrompt.app` and open it again.
 
 **Homebrew** (once the tap is published):
 
