@@ -3,7 +3,22 @@ import XCTest
 @testable import ShotPromptCore
 
 final class ReceiverServerTests: XCTestCase {
-    func freePort() -> UInt16 { UInt16.random(in: 40000...60000) }
+    // A port the OS just handed out, so parallel CI jobs never collide on it.
+    func freePort() -> UInt16 {
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        defer { Darwin.close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        withUnsafeMutablePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                _ = Darwin.bind(fd, $0, len)
+                _ = Darwin.getsockname(fd, $0, &len)
+            }
+        }
+        return UInt16(bigEndian: addr.sin_port)
+    }
 
     // Starts a server and waits until it listens.
     func startServer(port: UInt16, maxBody: Int = maxReceiverBody,
