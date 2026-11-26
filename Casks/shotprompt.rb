@@ -1,6 +1,7 @@
 # Homebrew cask, published from the aliir74/homebrew-tap repo:
 #   brew install --cask aliir74/tap/shotprompt
-# Update version and sha256 (from scripts/package.sh's last line) per release.
+# Each release attaches this cask with its version and sha256 filled in
+# (shotprompt.rb); copy that file to the tap. The values here are placeholders.
 cask "shotprompt" do
   version "0.4.0"
   sha256 "REPLACE_WITH_DMG_SHA256"

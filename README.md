@@ -118,7 +118,7 @@ The app is ad-hoc signed with a designated requirement of just its bundle ID, so
 
 Uninstall: `launchctl bootout gui/$(id -u)/io.github.aliir74.shot-prompt`, then delete the plist in `~/Library/LaunchAgents` and the app.
 
-`scripts/package.sh <version>` builds the universal app and `.dmg` into `dist/`, signed and notarized when `DEVELOPER_ID` and the `NOTARY_*` variables are set. Pushing a `v*` tag runs it in CI (`.github/workflows/release.yml`) and attaches the `.dmg` to the release. `Casks/shotprompt.rb` is the Homebrew cask, copied to the tap per release.
+`scripts/package.sh <version>` builds the universal app and `.dmg` into `dist/`, signed and notarized when `DEVELOPER_ID` and the `NOTARY_*` variables are set. Pushing a `v*` tag runs it in CI (`.github/workflows/release.yml`) and attaches the `.dmg` to the release. `Casks/shotprompt.rb` is the Homebrew cask template; each release attaches it filled in (`shotprompt.rb`) to copy to the tap.
 
 ## Tests
 

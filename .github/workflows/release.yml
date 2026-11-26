@@ -49,4 +49,9 @@ jobs:
           DMG="dist/ShotPrompt-${GITHUB_REF_NAME#v}.dmg"
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber
+          # The cask with this release's version and checksum, ready to copy to the tap.
+          SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
+          sed -e "s/^  version \".*\"/  version \"${GITHUB_REF_NAME#v}\"/" \
+              -e "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" Casks/shotprompt.rb > dist/shotprompt.rb
+          grep -q "$SHA" dist/shotprompt.rb
+          gh release upload "$GITHUB_REF_NAME" "$DMG" dist/shotprompt.rb --clobber
