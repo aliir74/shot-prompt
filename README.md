@@ -3,14 +3,15 @@
 [![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/aliir74)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/aliir74)
 
-Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
+Take a [Shottr](https://shottr.cc) capture, start typing (or click the icon), press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt, or it joins a thread already open in T3.
 
 - Watches `~/Pictures` for new `SCR-*.png` or `.jpeg` files (turn on Shottr's "save after capture").
 - Shows a small thumbnail icon by the mouse, where the capture region ended. Typing, or clicking the icon, opens the prompt panel. Both take the keyboard without bringing the app forward. No Input Monitoring permission is needed. Accessibility is optional: the window title, page address and project pick in [context](#context-and-privacy), and the [paste into T3](#paste-into-t3) setting, need it.
 - The icon leaves 3 seconds after you switch to another app, so you can still click it on the way. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
 - Each capture also sends where it came from (app, window title, page address or file), shown as chips you can remove before sending. See [Context and privacy](#context-and-privacy).
 - The project picker at the bottom right says which T3 project gets the thread. It starts on the project the captured window belongs to when that is clear, else on `$SHOT_PROMPT_CWD`; Tab (or a click) opens the list of your T3 projects, pinned first, then most recently used. Arrow keys or type-to-select, then Enter, pick one.
-- Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> [--image <more>…] "<prompt>"`.
+- Below the projects, the same list has "Add to an open thread": T3's 10 most recently active open threads (not settled, archived, a subagent's or a side chat). Pick one and Enter sends the screenshot and prompt into that thread as its next message, on the thread's own model, instead of starting a new thread. The hint then reads "↩ add to thread". Unlike [Paste into T3](#paste-into-t3), this works from any app and does not need T3 in front or the thread on screen.
+- Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> [--image <more>…] "<prompt>"`, with `--thread <thread id>` first when you picked a thread.
 - Before you type in the panel, Esc, switching to another app, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture joins the prompt as another screenshot (up to 4; click its "Capture N" chip to take it out). The usual edit shortcuts (Cmd+V, Cmd+A, Cmd+C, Cmd+X, Cmd+Z) work in the panel, empty or not. If Shottr also copies captures, the first Cmd+V while only the icon shows removes the icon; press it again to paste.
 - Dictation (Wispr Flow): holding Fn, or Wispr recording from the microphone (any hotkey, or hands-free mode), opens the prompt from the icon. An empty prompt stays open while you dictate and for 10 seconds after, so the words have time to arrive.
 
@@ -75,7 +76,9 @@ It is read at every capture, so no restart is needed. How it works:
 
 ## Dispatch command
 
-ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userdata/statev2.sqlite`, read-only) for the project list; if it cannot, the panel has no picker and every thread goes to `$SHOT_PROMPT_CWD`. To open the thread it runs a command you provide, which must accept `--cwd DIR --image PATH [--image PATH…] PROMPT` (one `--image` per picture, in order), open the thread, and exit 0 (non-zero output is shown in the panel). To attach an image, the command can upload it through T3's `attachments.createUploadUrl` RPC, POST the bytes to the returned URL, and pass the `pending-…` attachment id in `orchestration.launchThread`'s `initialMessage.attachments`.
+ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userdata/statev2.sqlite`, read-only) for the project list; if it cannot, the panel has no picker and every thread goes to `$SHOT_PROMPT_CWD`. It reads the open-thread list from the same database. To open the thread it runs a command you provide, which must accept `--cwd DIR --image PATH [--image PATH…] PROMPT` (one `--image` per picture, in order), open the thread, and exit 0 (non-zero output is shown in the panel). To attach an image, the command can upload it through T3's `attachments.createUploadUrl` RPC, POST the bytes to the returned URL, and pass the `pending-…` attachment id in `orchestration.launchThread`'s `initialMessage.attachments`.
+
+When you pick an open thread, the command also gets `--thread ID` (before `--cwd`, which it can then ignore) and must send the prompt into that thread instead. T3's composer does this with `orchestration.dispatchCommand` and a `message.dispatch` command (`dispatchMode: {"type": "queue_after_active"}`, the thread's own `modelSelection`); its `attachments` take the same `pending-…` ids. A command without `--thread` support fails, and the panel shows its error; new threads work as before.
 
 ## Install
 

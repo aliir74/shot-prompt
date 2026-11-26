@@ -14,7 +14,8 @@
 // the prompt. Dictation (holding Fn, or Wispr Flow using the microphone with
 // any hotkey or hands-free) opens the prompt from the icon and keeps an empty
 // prompt open while you talk and a little after. The project
-// picker in the panel (Tab, or click it) sends the thread to another T3 project.
+// picker in the panel (Tab, or click it) sends the thread to another T3 project,
+// or adds the capture to one of T3's open threads instead of starting a new one.
 // With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
 // that and lands in the chat open there, as if you pressed Cmd+V in it,
 // on a new line when text comes before the caret.
@@ -390,7 +391,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         layoutChips()
         guard autoProject, !pickedByHand, let pp = picker, let w = window,
               let root = matchProject(w, serverFolder: serverFolder, projects: projects),
-              let item = pp.itemArray.first(where: { $0.representedObject as? String == root }) else { return }
+              let item = pp.itemArray.first(where: { $0.representedObject as? SendTarget == .newThread(root: root) })
+        else { return }
         pp.select(item)
         pp.toolTip = "T3 project for the new thread, picked from the window you captured (Tab to change)"
         layoutStatus()
@@ -799,6 +801,7 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     // The project the thread opens in: SHOT_PROMPT_CWD first, then the rest.
+    // Below them, T3's open threads, to add the capture to one of those instead.
     private func makePicker(_ projects: [Project]) -> NSPopUpButton {
         let pp = NSPopUpButton(frame: .zero, pullsDown: false)
         pp.isBordered = false
@@ -809,11 +812,27 @@ final class Controller: NSObject, NSTextViewDelegate {
             // Its own action, since Tab pops the menu up outside the button.
             let item = NSMenuItem(title: entry.name, action: #selector(pickedProject(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = entry.root
+            item.representedObject = SendTarget.newThread(root: entry.root)
             item.toolTip = entry.toolTip
             pp.menu?.addItem(item)
         }
-        pp.toolTip = "T3 project for the new thread (Tab)"
+        let threads = threadEntries(loadThreads(databasePath: config.t3Database))
+        if !threads.isEmpty {
+            pp.menu?.addItem(.separator())
+            let h = NSMenuItem(title: "Add to an open thread", action: nil, keyEquivalent: "")
+            h.isEnabled = false
+            pp.menu?.addItem(h)
+        }
+        for entry in threads {
+            let item = NSMenuItem(title: entry.name, action: #selector(pickedProject(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = SendTarget.thread(id: entry.id)
+            item.toolTip = entry.toolTip
+            item.indentationLevel = 1
+            pp.menu?.addItem(item)
+        }
+        pp.autoenablesItems = false
+        pp.toolTip = "T3 project for the new thread, or an open thread to add to (Tab)"
         menuObservers += holdOpen(while: pp.menu!)
         return pp
     }
@@ -870,8 +889,24 @@ final class Controller: NSObject, NSTextViewDelegate {
     @objc private func pickedProject(_ item: NSMenuItem) {
         pickedByHand = true
         picker?.select(item)
+        if case .thread = target {
+            picker?.toolTip = item.toolTip.map { "Adds to: \($0) (Tab to change)" }
+        } else {
+            picker?.toolTip = "T3 project for the new thread (Tab to change)"
+        }
+        status?.stringValue = statusHint(hasProjects: true, toThread: isThread(target))
         layoutStatus()
         if let f = field { panel?.makeFirstResponder(f) }
+    }
+
+    // Where Enter sends: the picker's choice, else a new thread in SHOT_PROMPT_CWD.
+    private var target: SendTarget {
+        picker?.selectedItem?.representedObject as? SendTarget ?? .newThread(root: config.threadCwd)
+    }
+
+    private func isThread(_ t: SendTarget) -> Bool {
+        if case .thread = t { return true }
+        return false
     }
 
     private func layoutStatus() {
@@ -1005,14 +1040,18 @@ final class Controller: NSObject, NSTextViewDelegate {
         guard let typed = sendablePrompt(f.string) else { return }
         let prompt = promptWithContext(typed, context, captures: 1 + extraImages.count)
         let images = [url] + [context.windowShot].compactMap { $0 } + extraImages
-        let cwd = picker?.selectedItem?.representedObject as? String ?? config.threadCwd
+        let cwd: String, thread: String?
+        switch target {
+        case .newThread(let root): cwd = root; thread = nil
+        case .thread(let id): cwd = config.threadCwd; thread = id
+        }
         f.isEditable = false
         picker?.isEnabled = false
         chipViews.forEach { $0.isEnabled = false }
-        status?.stringValue = "launching…"
+        status?.stringValue = thread == nil ? "launching…" : "sending…"
         DispatchQueue.global().async {
             let (ok, out) = dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
-                                     environment: config.environment, home: config.home)
+                                     environment: config.environment, home: config.home, thread: thread)
             DispatchQueue.main.async {
                 if ok {
                     // The thread is already open in T3; vanish at once, no fade.
