@@ -132,6 +132,8 @@ final class PickerTests: XCTestCase {
 
     func testStatusHint() {
         XCTAssertEqual(statusHint(hasProjects: true), "↩ new thread · ⇥ project · esc")
-        XCTAssertEqual(statusHint(hasProjects: false), "↩ new T3 thread · esc dismiss")
+        XCTAssertEqual(statusHint(hasProjects: false), "↩ new thread · esc dismiss")
+        XCTAssertEqual(statusHint(hasProjects: true, target: .codex), "↩ Codex · ⇥ project · esc")
+        XCTAssertEqual(statusHint(hasProjects: false, target: .claudeApp), "↩ Claude app · esc dismiss")
     }
 }

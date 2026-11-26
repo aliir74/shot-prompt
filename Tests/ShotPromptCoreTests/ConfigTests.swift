@@ -13,6 +13,8 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.t3Database, "/Users/someone/.t3/userdata/statev2.sqlite")
         XCTAssertEqual(c.home, home)
         XCTAssertEqual(c.environment, [:])
+        XCTAssertNil(c.cwdFromEnvironment)
+        XCTAssertFalse(c.dispatchFromEnvironment)
     }
 
     func testEnvironmentOverrides() {
@@ -28,6 +30,8 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.threadCwd, "/work/proj")
         XCTAssertEqual(c.t3Database, "/db.sqlite")
         XCTAssertEqual(c.environment, env)
+        XCTAssertEqual(c.cwdFromEnvironment, "/work/proj")
+        XCTAssertTrue(c.dispatchFromEnvironment)
     }
 
     func testScreenshotLocation() {
