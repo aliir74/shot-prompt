@@ -143,6 +143,8 @@ final class Controller: NSObject, NSTextViewDelegate {
     // The last app to come forward that is neither Shottr nor this one: the
     // app a capture is taken in, while Shottr is in front for the capture.
     private var lastApp: NSRunningApplication?
+    // The apps that came forward and when, to find the one in front at the capture.
+    private var appHistory: [(app: NSRunningApplication, since: Date)] = []
     private var lastAppObserver: NSObjectProtocol?
     private var settingsObserver: NSObjectProtocol?
     // Counts captures, so a paste still waiting for T3 gives way to a newer one.
@@ -170,10 +172,11 @@ final class Controller: NSObject, NSTextViewDelegate {
     // Captures added while typing, after the first; each shows as a thumbnail chip.
     private var extraImages: [URL] = []
     private var extraChips: [NSButton] = []
-    // The last mouse down and up anywhere, in AppKit screen points: Shottr's
-    // drag, which says where the capture was. Mouse events need no permission.
+    // The last mouse down anywhere, and the last drag (a down and up apart),
+    // in AppKit screen points: a capture's drag, which says where and when it
+    // was. A click after it does not replace it. Mouse events need no permission.
     private var mouseDown: CGPoint?
-    private var mouseUp: (point: CGPoint, at: Date)?
+    private var drag: (down: CGPoint, up: CGPoint, at: Date)?
     private var mouseMonitor: Any?
 
     func start() {
@@ -183,19 +186,26 @@ final class Controller: NSObject, NSTextViewDelegate {
             do { try watcher.start() } catch { NSLog("ShotPrompt: cannot watch %@", watcher.directory.path) }
         }
         lastApp = NSWorkspace.shared.frontmostApplication.flatMap { Self.bystander($0) ? nil : $0 }
+        if let a = lastApp { appHistory = [(a, .distantPast)] }
         lastAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   !Self.bystander(app) else { return }
-            self?.lastApp = app
+            guard let self else { return }
+            self.lastApp = app
+            self.appHistory = Array((self.appHistory + [(app, Date())]).suffix(appHistoryLimit))
         }
         settingsObserver = NotificationCenter.default.addObserver(
             forName: settingsChangedNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.refreshContext() }
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] e in
-            if e.type == .leftMouseDown { self?.mouseDown = NSEvent.mouseLocation }
-            else { self?.mouseUp = (NSEvent.mouseLocation, Date()) }
+            guard let self else { return }
+            let point = NSEvent.mouseLocation
+            if e.type == .leftMouseDown { self.mouseDown = point; return }
+            if let down = self.mouseDown, hypot(point.x - down.x, point.y - down.y) >= 2 {
+                self.drag = (down, point, Date())
+            }
         }
     }
 
@@ -208,8 +218,13 @@ final class Controller: NSObject, NSTextViewDelegate {
 
     private func show(_ url: URL) {
         captures += 1
-        let app = capturedApp(front: NSWorkspace.shared.frontmostApplication, previous: lastApp,
-                              isBystander: Self.bystander)
+        // A drag that made this capture dates it; macOS may save it seconds later.
+        let dragged = dragRegion(of: url) != nil ? drag?.at : nil
+        let moment = captureMoment(fileCreated: creationDate(url), mouseUp: dragged, now: Date())
+        // The app in front when the capture was taken, not when its file came.
+        let app = appInFront(at: moment, history: appHistory)
+            ?? capturedApp(front: NSWorkspace.shared.frontmostApplication, previous: lastApp,
+                           isBystander: Self.bystander)
         let toT3 = pastesIntoT3(enabled: UserDefaults.standard.bool(forKey: pasteIntoT3Key),
                                 capturedBundleID: app?.bundleIdentifier)
         // A new capture while typing joins the prompt's screenshots. While a
@@ -236,11 +251,14 @@ final class Controller: NSObject, NSTextViewDelegate {
     // say so; for others, the last drag when its size matches the image. Nil
     // for other window and fullscreen captures.
     private func captureRegion(of url: URL) -> CGRect? {
-        if let rect = captureRect(attribute: extendedAttribute(screenCaptureRectAttribute, of: url)) { return rect }
-        guard let up = mouseUp, let pixels = pixelSize(of: url),
-              let primary = NSScreen.screens.first else { return nil }
-        let screen = NSScreen.screens.first { $0.frame.contains(up.point) } ?? primary
-        return ShotPromptCore.captureRegion(down: mouseDown, up: up.point, upAge: Date().timeIntervalSince(up.at),
+        captureRect(attribute: extendedAttribute(screenCaptureRectAttribute, of: url)) ?? dragRegion(of: url)
+    }
+
+    // The last drag's rectangle (top-left coordinates), when its size matches the image.
+    private func dragRegion(of url: URL) -> CGRect? {
+        guard let d = drag, let pixels = pixelSize(of: url), let primary = NSScreen.screens.first else { return nil }
+        let screen = NSScreen.screens.first { $0.frame.contains(d.up) } ?? primary
+        return ShotPromptCore.captureRegion(down: d.down, up: d.up, upAge: Date().timeIntervalSince(d.at),
                                             imagePixels: pixels, scale: screen.backingScaleFactor)
             .map { topLeft($0, primaryHeight: primary.frame.height) }
     }

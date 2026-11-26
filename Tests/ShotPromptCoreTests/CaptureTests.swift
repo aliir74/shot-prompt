@@ -12,6 +12,7 @@ final class CaptureTests: XCTestCase {
         XCTAssertTrue(isImageName("Screenshot 2026-11-26 at 1.02.03 PM.png"))
         XCTAssertTrue(isImageName("a.JPEG"))
         XCTAssertTrue(isImageName("a.jpg"))
+        XCTAssertTrue(isImageName("Screenshot 1.heic"), "macOS's HDR captures")
         XCTAssertFalse(isImageName(".Screenshot 2026-11-26.png"), "macOS writes a hidden file first")
         XCTAssertFalse(isImageName("a.gif"))
         XCTAssertFalse(isImageName("a.png.tmp"))
@@ -82,7 +83,7 @@ final class CaptureTests: XCTestCase {
         for name in ["SCR-a.png", "Screenshot b.jpeg", "notes.txt", ".hidden.png", "SCR-c.heic"] {
             FileManager.default.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data())
         }
-        XCTAssertEqual(Set(listImages(in: dir)), ["SCR-a.png", "Screenshot b.jpeg"])
+        XCTAssertEqual(Set(listImages(in: dir)), ["SCR-a.png", "Screenshot b.jpeg", "SCR-c.heic"])
         XCTAssertEqual(listImages(in: URL(fileURLWithPath: "/nonexistent/\(UUID())")), [])
     }
 

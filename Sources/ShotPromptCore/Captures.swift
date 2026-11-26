@@ -11,9 +11,9 @@ public let screenCaptureRectAttribute = "com.apple.metadata:kMDItemScreenCapture
 public let captureMaxAge: TimeInterval = 60
 
 // An image file that is not hidden: macOS writes a capture under a hidden
-// ".Screenshot…" name first, then renames it.
+// ".Screenshot…" name first, then renames it. HEIC is macOS's HDR capture format.
 public func isImageName(_ name: String) -> Bool {
-    let types = [".png", ".jpg", ".jpeg"]
+    let types = [".png", ".jpg", ".jpeg", ".heic"]
     return !name.hasPrefix(".") && types.contains { name.lowercased().hasSuffix($0) }
 }
 
