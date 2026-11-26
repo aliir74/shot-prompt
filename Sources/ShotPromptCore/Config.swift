@@ -6,6 +6,8 @@ public struct Config {
     public let home: URL
     // Where Shottr saves captures.
     public let captureDir: URL
+    // Every folder watched for screenshots: Shottr's, then macOS's own.
+    public let captureDirs: [URL]
     // The command that opens the T3 thread.
     public let dispatchBin: String
     // The project folder the new thread opens in, unless you pick another.
@@ -13,11 +15,13 @@ public struct Config {
     // T3 Code's database, read only for its list of projects.
     public let t3Database: String
 
-    public init(environment: [String: String], home: URL) {
+    // `screenshotLocation` is macOS's screencapture "location" setting, if set.
+    public init(environment: [String: String], home: URL, screenshotLocation: String? = nil) {
         self.environment = environment
         self.home = home
         captureDir = URL(fileURLWithPath: environment["SHOT_PROMPT_CAPTURE_DIR"]
             ?? home.appendingPathComponent("Pictures").path)
+        captureDirs = uniqueFolders([captureDir, screenshotFolder(location: screenshotLocation, home: home)])
         dispatchBin = environment["SHOT_PROMPT_DISPATCH"]
             ?? home.appendingPathComponent(".local/bin/t3-dispatch").path
         threadCwd = environment["SHOT_PROMPT_CWD"] ?? home.path

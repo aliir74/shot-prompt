@@ -1,6 +1,15 @@
 import Foundation
 
 public let shottrBundleID = "cc.ffitch.shottr"
+// The apps that can come forward while a screenshot is taken: Shottr, macOS's
+// capture overlay, and the Screenshot app (Cmd+Shift+5).
+public let captureToolBundleIDs: Set<String> = [
+    shottrBundleID, "com.apple.screencaptureui", "com.apple.screenshot.launcher",
+]
+
+public func isCaptureTool(_ bundleID: String?) -> Bool {
+    bundleID.map(captureToolBundleIDs.contains) ?? false
+}
 
 // What a new capture does to what is on screen.
 public enum CaptureAction: Equatable {
@@ -120,7 +129,7 @@ public enum ActivationAction: Equatable {
 
 // Switching apps before typing means the capture was not for Claude, so an
 // empty prompt closes and the icon leaves soon after, unless you are dictating. This app coming forward
-// for the picker, the picker handing the front back, and Shottr coming forward
+// for the picker, the picker handing the front back, and a capture tool coming forward
 // around a capture are not switches.
 public func activationAction(activatedPID: Int32?, activatedBundleID: String?, ownPID: Int32,
                              returnToPID: Int32?, panelOpen: Bool, iconOpen: Bool,
@@ -128,7 +137,7 @@ public func activationAction(activatedPID: Int32?, activatedBundleID: String?, o
     if activatedPID == ownPID || dictating { return .none }
     if let r = returnToPID, activatedPID == r { return .clearReturn }
     if panelOpen { return .dismissIfEmpty }
-    guard iconOpen, activatedBundleID != shottrBundleID, iconTimeLeft > iconAwaySeconds else { return .none }
+    guard iconOpen, !isCaptureTool(activatedBundleID), iconTimeLeft > iconAwaySeconds else { return .none }
     return .shortenIcon(iconAwaySeconds)
 }
 

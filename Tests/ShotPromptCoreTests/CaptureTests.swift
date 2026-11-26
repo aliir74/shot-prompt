@@ -2,34 +2,107 @@ import XCTest
 @testable import ShotPromptCore
 
 final class CaptureTests: XCTestCase {
-    func testIsCapture() {
-        XCTAssertTrue(isCapture("SCR-20261102-abc.png"))
-        XCTAssertTrue(isCapture("SCR-1.jpg"))
-        XCTAssertTrue(isCapture("SCR-1.jpeg"))
-        XCTAssertTrue(isCapture("SCR-1.PNG"))
-        XCTAssertFalse(isCapture("scr-1.png"), "prefix is case-sensitive")
-        XCTAssertFalse(isCapture("Screenshot 1.png"))
-        XCTAssertFalse(isCapture("SCR-1.gif"))
-        XCTAssertFalse(isCapture("SCR-1.png.tmp"))
+    // Tags a file the way macOS tags a screenshot.
+    func tag(_ url: URL, _ name: String = screenCaptureAttribute, _ value: Data = Data([1])) {
+        _ = value.withUnsafeBytes { setxattr(url.path, name, $0.baseAddress, value.count, 0, 0) }
     }
 
-    func testListCaptures() throws {
+    func testIsImageName() {
+        XCTAssertTrue(isImageName("SCR-1.png"))
+        XCTAssertTrue(isImageName("Screenshot 2026-11-26 at 1.02.03 PM.png"))
+        XCTAssertTrue(isImageName("a.JPEG"))
+        XCTAssertTrue(isImageName("a.jpg"))
+        XCTAssertTrue(isImageName("Screenshot 1.heic"), "macOS's HDR captures")
+        XCTAssertFalse(isImageName(".Screenshot 2026-11-26.png"), "macOS writes a hidden file first")
+        XCTAssertFalse(isImageName("a.gif"))
+        XCTAssertFalse(isImageName("a.png.tmp"))
+    }
+
+    func testIsCapture() throws {
         let dir = try makeTempDir(self)
-        for name in ["SCR-a.png", "SCR-b.jpeg", "notes.txt", "SCR-c.heic"] {
+        func file(_ name: String) -> URL {
+            let u = dir.appendingPathComponent(name)
+            FileManager.default.createFile(atPath: u.path, contents: Data([1]))
+            return u
+        }
+        XCTAssertTrue(isCapture(file("SCR-20261102-abc.png")), "Shottr's name is enough")
+        XCTAssertTrue(isCapture(file("SCR-1.PNG")))
+        XCTAssertFalse(isCapture(file("scr-1.png")), "prefix is case-sensitive")
+        XCTAssertFalse(isCapture(file("Screenshot 1.png")), "an untagged image is not a capture")
+        let native = file("Screenshot 2.png")
+        tag(native)
+        XCTAssertTrue(isCapture(native), "a tagged image is")
+        let gif = file("SCR-1.gif")
+        tag(gif)
+        XCTAssertFalse(isCapture(gif), "only png and jpeg")
+    }
+
+    func testExtendedAttribute() throws {
+        let dir = try makeTempDir(self)
+        let f = dir.appendingPathComponent("x.png")
+        FileManager.default.createFile(atPath: f.path, contents: Data([1]))
+        XCTAssertNil(extendedAttribute(screenCaptureAttribute, of: f))
+        tag(f, screenCaptureAttribute, Data([7, 8]))
+        XCTAssertEqual(extendedAttribute(screenCaptureAttribute, of: f), Data([7, 8]))
+        tag(f, "com.example.empty", Data())
+        XCTAssertEqual(extendedAttribute("com.example.empty", of: f), Data())
+        XCTAssertNil(extendedAttribute(screenCaptureAttribute, of: dir.appendingPathComponent("missing")))
+    }
+
+    func testCaptureRect() throws {
+        func plist(_ v: Any) throws -> Data {
+            try PropertyListSerialization.data(fromPropertyList: v, format: .binary, options: 0)
+        }
+        XCTAssertEqual(captureRect(attribute: try plist([2775.0, 45.0, 660.0, 1342.0])),
+                       CGRect(x: 2775, y: 45, width: 660, height: 1342))
+        XCTAssertNil(captureRect(attribute: nil))
+        XCTAssertNil(captureRect(attribute: Data([1, 2, 3])), "not a property list")
+        XCTAssertNil(captureRect(attribute: try plist([1.0, 2.0, 3.0])), "three numbers")
+        XCTAssertNil(captureRect(attribute: try plist([1.0, 2.0, 0.0, 4.0])), "no width")
+        XCTAssertNil(captureRect(attribute: try plist([1.0, 2.0, 3.0, 0.0])), "no height")
+        XCTAssertNil(captureRect(attribute: try plist(["a"])), "not numbers")
+    }
+
+    func testIsFresh() {
+        let now = Date()
+        XCTAssertTrue(isFresh(created: now.addingTimeInterval(-5), now: now))
+        XCTAssertFalse(isFresh(created: now.addingTimeInterval(-captureMaxAge), now: now), "moved in, not taken")
+        XCTAssertFalse(isFresh(created: nil, now: now))
+    }
+
+    func testCreationDate() throws {
+        let dir = try makeTempDir(self)
+        let f = dir.appendingPathComponent("x.png")
+        FileManager.default.createFile(atPath: f.path, contents: Data([1]))
+        XCTAssertNotNil(creationDate(f))
+        XCTAssertNil(creationDate(dir.appendingPathComponent("missing")))
+    }
+
+    func testListImages() throws {
+        let dir = try makeTempDir(self)
+        for name in ["SCR-a.png", "Screenshot b.jpeg", "notes.txt", ".hidden.png", "SCR-c.heic"] {
             FileManager.default.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data())
         }
-        XCTAssertEqual(Set(listCaptures(in: dir)), ["SCR-a.png", "SCR-b.jpeg"])
+        XCTAssertEqual(Set(listImages(in: dir)), ["SCR-a.png", "Screenshot b.jpeg", "SCR-c.heic"])
+        XCTAssertEqual(listImages(in: URL(fileURLWithPath: "/nonexistent/\(UUID())")), [])
     }
 
-    func testListCapturesMissingFolder() {
-        XCTAssertEqual(listCaptures(in: URL(fileURLWithPath: "/nonexistent/\(UUID())")), [])
+    func testNewImages() {
+        XCTAssertEqual(newImages(current: ["a.png", "c.png", "b.png"], known: ["a.png"]), ["b.png", "c.png"])
+        XCTAssertEqual(newImages(current: ["a.png"], known: ["a.png", "0.png"]), [])
     }
 
-    func testNewestCapture() {
-        XCTAssertEqual(newestCapture(current: ["SCR-1.png", "SCR-3.png", "SCR-2.png"], known: ["SCR-1.png"]),
-                       "SCR-3.png")
-        XCTAssertNil(newestCapture(current: ["SCR-1.png"], known: ["SCR-1.png", "SCR-0.png"]))
-        XCTAssertNil(newestCapture(current: [], known: []))
+    func testScreenshotFolder() {
+        let home = URL(fileURLWithPath: "/Users/someone")
+        XCTAssertEqual(screenshotFolder(location: nil, home: home).path, "/Users/someone/Desktop")
+        XCTAssertEqual(screenshotFolder(location: "  ", home: home).path, "/Users/someone/Desktop")
+        XCTAssertEqual(screenshotFolder(location: "~/Pictures/Shots", home: home).path, "/Users/someone/Pictures/Shots")
+        XCTAssertEqual(screenshotFolder(location: "/Volumes/x", home: home).path, "/Volumes/x")
+    }
+
+    func testUniqueFolders() {
+        let a = URL(fileURLWithPath: "/a"), b = URL(fileURLWithPath: "/b")
+        XCTAssertEqual(uniqueFolders([a, b, URL(fileURLWithPath: "/a/"), URL(fileURLWithPath: "/b/../a")]), [a, b])
     }
 
     func testWriteCheck() {
@@ -79,10 +152,27 @@ final class CaptureWatcherTests: XCTestCase {
         XCTAssertEqual(w.known, ["SCR-old.png"], "captures already there are not new")
 
         FileManager.default.createFile(atPath: dir.appendingPathComponent("notes.txt").path, contents: Data([1]))
+        FileManager.default.createFile(atPath: dir.appendingPathComponent("photo.png").path, contents: Data([1]))
+        let native = dir.appendingPathComponent("Screenshot 1.png")
+        FileManager.default.createFile(atPath: native.path, contents: Data([1, 2]))
+        _ = Data([1]).withUnsafeBytes { setxattr(native.path, screenCaptureAttribute, $0.baseAddress, 1, 0, 0) }
         FileManager.default.createFile(atPath: dir.appendingPathComponent("SCR-new.png").path, contents: Data([1, 2, 3]))
-        spin(until: { !seen.isEmpty }, timeout: 5)
-        XCTAssertEqual(seen.map(\.lastPathComponent), ["SCR-new.png"])
-        XCTAssertEqual(w.known, ["SCR-old.png", "SCR-new.png"])
+        spin(until: { seen.count == 2 }, timeout: 5)
+        XCTAssertEqual(Set(seen.map(\.lastPathComponent)), ["SCR-new.png", "Screenshot 1.png"],
+                       "an untagged image is not a capture")
+        XCTAssertEqual(w.known, ["SCR-old.png", "SCR-new.png", "Screenshot 1.png", "photo.png"])
+    }
+
+    func testOldScreenshotMovedInIsIgnored() throws {
+        let dir = try makeTempDir(self)
+        let f = dir.appendingPathComponent("SCR-old.png")
+        FileManager.default.createFile(atPath: f.path, contents: Data([1]))
+        try FileManager.default.setAttributes([.creationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: f.path)
+        let w = CaptureWatcher(directory: dir)
+        var called = false
+        w.onCapture = { _ in called = true }
+        w.waitUntilWritten(f, lastSize: 1, tries: 1)
+        XCTAssertFalse(called)
     }
 
     func testScanWithNothingNew() throws {
