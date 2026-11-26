@@ -1,7 +1,7 @@
 # Rework the ShotPrompt thread picker into a search popup with a remembered target
 
 **Goal:** Rework the ShotPrompt thread picker into a search popup with a remembered target
-**Status:** in_progress
+**Status:** done
 **Created:** 2026-11-26
 **Execution:** Use `/execute-plan-md <path-to-this-file>` to run this plan task-by-task.
 
@@ -277,7 +277,6 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 | Task 2.5: the notice code is a `showNotice(_:)` method; the local sent target in `send()` is named `sentTo` | Keeps the completion short; `sent` is the new Bool flag |
 | Task 2.5: the failure is logged before the stale-panel check; the row cells are `NSTableCellView`s | A failed send after Esc still leaves its log line; a table cell view forwards the selected row's style so its labels stay readable on the accent colour |
 | Task 2.1: thread times use `.000Z` milliseconds, and `make-fixture.sh` takes the fixture folder as `$1` (default: its own folder) | `date -u` gives whole seconds; the format still matches T3's |
-
 | Live checks (2026-11-26, laptop display, fixture DB): all of Tasks 2.2 to 2.5 passed on screen | One bug found and fixed: the hint was cut off next to a long thread chip, because the label's inner padding was not measured (commit c90f5ce) |
 | Scripted input: cliclick's special keys (Tab, Return, Delete, Space) mostly do not arrive; System Events `key code` does | Live checks used `osascript ... key code`; the old "Tab is flaky" note was this, not the app |
 | Task 3.2 (one real send into a scratch thread) was skipped | `t3-dispatch --thread` was verified live earlier in this job (image landed on the thread), the panel passes `--thread` through the unit-tested `dispatch`, and the full panel flow was run with a stand-in dispatch command |
