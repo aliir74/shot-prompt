@@ -95,10 +95,11 @@ public func localPort(_ address: String?) -> Int? {
     return c.port
 }
 
-// The first value of a field in `lsof -F` output: "p123" for a PID, "n/path" for a name.
+// The value of a field in `lsof -F` output: "p123" for a PID, "n/path" for a
+// name. Nil when the lines disagree: two servers on one port (one on
+// 127.0.0.1, one on ::) leave the project unknown rather than guessed.
 public func lsofField(_ output: String, _ field: Character) -> String? {
-    for line in output.split(separator: "\n") where line.first == field && line.count > 1 {
-        return String(line.dropFirst())
-    }
-    return nil
+    let values = Set(output.split(separator: "\n")
+        .filter { $0.first == field && $0.count > 1 }.map { String($0.dropFirst()) })
+    return values.count == 1 ? values.first : nil
 }
