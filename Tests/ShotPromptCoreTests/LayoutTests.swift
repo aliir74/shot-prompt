@@ -69,10 +69,12 @@ final class LayoutTests: XCTestCase {
 
     func testPopupHeight() {
         let item = PopupRow.item(PopupItem(target: .thread(id: "1"), title: "t", detail: "", toolTip: ""))
-        XCTAssertEqual(popupHeight([.header("a"), item, item, .header("b"), item]), 34 + (2 * 22 + 3 * 24) + 8)
-        XCTAssertEqual(popupHeight([.header("a"), item, item, .header("b"), item]), 158)
+        // 34 search + (2 headers × 22 + 3 rows × 24) + 8 padding. Plain literals: CI's
+        // compiler times out type-checking the sum next to the enum array.
+        let rows: [PopupRow] = [.header("a"), item, item, .header("b"), item]
+        XCTAssertEqual(popupHeight(rows), 158)
         XCTAssertEqual(popupHeight([]), 42)
-        XCTAssertEqual(popupHeight(Array(repeating: item, count: 20)), 34 + 420 + 8, "the list caps and scrolls")
+        XCTAssertEqual(popupHeight(Array(repeating: item, count: 20)), 462, "34 + 420 cap + 8: the list caps and scrolls")
         XCTAssertLessThanOrEqual(2 * PopupMetrics.headerHeight + 15 * PopupMetrics.rowHeight, PopupMetrics.maxListHeight)
         XCTAssertEqual(PopupMetrics.padding, 8)
         XCTAssertEqual(PopupMetrics.gap, 4)
