@@ -166,4 +166,49 @@ final class TargetPickerTests: XCTestCase {
                        "the click that closed the popup does not open it again")
         XCTAssertEqual(popupReopenGuardSeconds, 0.3)
     }
+
+    func testLastTargetMinutes() {
+        XCTAssertEqual(lastTargetMinutes(nil), 15)
+        XCTAssertEqual(lastTargetMinutes(30), 30)
+        XCTAssertEqual(lastTargetMinutes(NSNumber(value: 5)), 5)
+        XCTAssertEqual(lastTargetMinutes("60"), 60, "a launch argument")
+        XCTAssertEqual(lastTargetMinutes(0), 0)
+        XCTAssertEqual(lastTargetMinutes("0"), 0)
+        XCTAssertEqual(lastTargetMinutes(-3), 0)
+        XCTAssertEqual(lastTargetMinutes("abc"), 15)
+        XCTAssertEqual(lastTargetDefaultMinutes, 15)
+        XCTAssertEqual(lastTargetMinutesKey, "lastTargetMinutes")
+        XCTAssertEqual(lastTargetChoices, [0, 5, 15, 30, 60])
+        XCTAssertEqual(lastTargetLabel(0), "Off")
+        XCTAssertEqual(lastTargetLabel(15), "15 min")
+    }
+
+    func remembered(_ target: SendTarget?, minutesAgo: Double = 14, minutes: Int = 15) -> SendTarget? {
+        rememberedTarget(target.map { LastTarget(target: $0, at: now.addingTimeInterval(-minutesAgo * 60)) },
+                         minutes: minutes, now: now, threads: threads, entries: entries)
+    }
+
+    func testRememberedTarget() {
+        XCTAssertNil(remembered(nil))
+        XCTAssertNil(remembered(.thread(id: "1"), minutes: 0), "off")
+        XCTAssertEqual(remembered(.thread(id: "1")), .thread(id: "1"))
+        XCTAssertNil(remembered(.thread(id: "1"), minutesAgo: 15), "expired")
+        XCTAssertNil(remembered(.thread(id: "gone")), "no longer open")
+        XCTAssertEqual(remembered(.newThread(root: "/w/x-beta")), .newThread(root: "/w/x-beta"))
+        XCTAssertNil(remembered(.newThread(root: "/w/removed")), "no longer a project")
+    }
+
+    func testResolveTarget() {
+        func resolve(picked: SendTarget? = nil, remembered: SendTarget? = nil, detected: String? = nil,
+                     entries: [PickerEntry]? = nil) -> SendTarget {
+            resolveTarget(picked: picked, remembered: remembered, detectedRoot: detected,
+                          entries: entries ?? self.entries, defaultRoot: "/w/default")
+        }
+        XCTAssertEqual(resolve(picked: .thread(id: "1"), remembered: .thread(id: "2"), detected: "/w/x-eta"),
+                       .thread(id: "1"))
+        XCTAssertEqual(resolve(remembered: .thread(id: "2"), detected: "/w/x-eta"), .thread(id: "2"))
+        XCTAssertEqual(resolve(detected: "/w/x-eta"), .newThread(root: "/w/x-eta"))
+        XCTAssertEqual(resolve(), .newThread(root: "/w/x-gamma"))
+        XCTAssertEqual(resolve(entries: []), .newThread(root: "/w/default"))
+    }
 }

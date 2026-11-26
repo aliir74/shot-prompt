@@ -135,3 +135,51 @@ public func chipClickToggles(closedAt: Date?, now: Date) -> Bool {
     guard let c = closedAt else { return true }
     return now.timeIntervalSince(c) >= popupReopenGuardSeconds
 }
+
+// How long the panel starts on the last thread or project you sent to.
+public let lastTargetMinutesKey = "lastTargetMinutes"
+public let lastTargetDefaultMinutes = 15
+// The gear menu's choices; 0 is off.
+public let lastTargetChoices = [0, 5, 15, 30, 60]
+
+// The setting as stored: a number from the gear menu, or a string from a
+// launch argument. Negative is off; missing or unreadable is the default.
+public func lastTargetMinutes(_ stored: Any?) -> Int {
+    var value: Int?
+    if let n = stored as? Int { value = n } else if let s = stored as? String { value = Int(s) }
+    guard let v = value else { return lastTargetDefaultMinutes }
+    return max(v, 0)
+}
+
+public func lastTargetLabel(_ minutes: Int) -> String {
+    minutes == 0 ? "Off" : "\(minutes) min"
+}
+
+// Where the last send went, and when.
+public struct LastTarget: Equatable {
+    public let target: SendTarget
+    public let at: Date
+
+    public init(target: SendTarget, at: Date) {
+        self.target = target
+        self.at = at
+    }
+}
+
+// The last target, while it is younger than `minutes` and its thread is still
+// open or its project still listed.
+public func rememberedTarget(_ last: LastTarget?, minutes: Int, now: Date, threads: [OpenThread],
+                             entries: [PickerEntry]) -> SendTarget? {
+    guard let last, now.timeIntervalSince(last.at) < Double(minutes * 60) else { return nil }
+    switch last.target {
+    case .thread(let id): return threads.contains { $0.id == id } ? last.target : nil
+    case .newThread(let root): return entries.contains { $0.root == root } ? last.target : nil
+    }
+}
+
+// The target the panel starts on: what you picked, else the remembered
+// target, else the detected project, else the default folder.
+public func resolveTarget(picked: SendTarget?, remembered: SendTarget?, detectedRoot: String?,
+                          entries: [PickerEntry], defaultRoot: String) -> SendTarget {
+    picked ?? remembered ?? .newThread(root: detectedRoot ?? entries.first?.root ?? defaultRoot)
+}

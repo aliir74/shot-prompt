@@ -75,20 +75,20 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
 
 ### Task 1.4: Remembered target and target resolution
 **Files:** Modify: `Sources/ShotPromptCore/TargetPicker.swift`, `Tests/ShotPromptCoreTests/TargetPickerTests.swift`
-- [ ] Write failing tests:
+- [x] Write failing tests:
   - `lastTargetMinutes`: nil → 15; `30` (Int) → 30; `NSNumber(value: 5)` → 5; `"60"` (a launch argument) → 60; `0` and `"0"` → 0; `-3` → 0; `"abc"` → 15. `lastTargetChoices == [0, 5, 15, 30, 60]`. `lastTargetLabel(0) == "Off"`, `lastTargetLabel(15) == "15 min"`.
   - `rememberedTarget`: nil when `last` is nil; nil when `minutes == 0`; a thread used 14 min ago and still in `threads` is returned with `minutes: 15`; the same at 15 min exactly is nil; a thread no longer in `threads` is nil; a project root in `entries` is returned; a project root not in `entries` is nil.
   - `resolveTarget`: `picked` wins over everything; then `remembered`; then `.newThread(root: detectedRoot)`; then `.newThread(root: entries.first!.root)`; with empty `entries`, `.newThread(root: defaultRoot)`.
-- [ ] Run `swift test --filter TargetPickerTests`, see red.
-- [ ] Implement:
+- [x] Run `swift test --filter TargetPickerTests`, see red.
+- [x] Implement:
   - `public let lastTargetMinutesKey = "lastTargetMinutes"`, `public let lastTargetDefaultMinutes = 15`, `public let lastTargetChoices = [0, 5, 15, 30, 60]`
   - `public func lastTargetMinutes(_ stored: Any?) -> Int` (Int, NSNumber or digit string; negative → 0; missing or unreadable → 15)
   - `public func lastTargetLabel(_ minutes: Int) -> String`
   - `public struct LastTarget: Equatable { public let target: SendTarget; public let at: Date; public init(target: SendTarget, at: Date) }`
   - `public func rememberedTarget(_ last: LastTarget?, minutes: Int, now: Date, threads: [OpenThread], entries: [PickerEntry]) -> SendTarget?`
   - `public func resolveTarget(picked: SendTarget?, remembered: SendTarget?, detectedRoot: String?, entries: [PickerEntry], defaultRoot: String) -> SendTarget`
-- [ ] Verify: `swift test --filter TargetPickerTests` → pass.
-- [ ] Commit: `Remember the last target for a set time and resolve the starting target`
+- [x] Verify: `swift test --filter TargetPickerTests` → pass.
+- [x] Commit: `Remember the last target for a set time and resolve the starting target`
 
 ### Task 1.5: Chip, hint, status layout and send outcome
 **Files:** Modify: `Sources/ShotPromptCore/TargetPicker.swift`, `Sources/ShotPromptCore/Layout.swift`, `Tests/ShotPromptCoreTests/TargetPickerTests.swift`, `Tests/ShotPromptCoreTests/LayoutTests.swift`
