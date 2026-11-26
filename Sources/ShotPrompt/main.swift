@@ -800,38 +800,43 @@ final class Controller: NSObject, NSTextViewDelegate {
         armIdle()
     }
 
-    // The project the thread opens in: SHOT_PROMPT_CWD first, then the rest.
-    // Below them, T3's open threads, to add the capture to one of those instead.
+    // T3's open threads first, to add the capture to one of those, then the
+    // projects for a new thread: SHOT_PROMPT_CWD first, then the rest. The
+    // default project starts selected, and the menu opens with it under the
+    // pointer, so the threads show just above it without scrolling past every project.
     private func makePicker(_ projects: [Project]) -> NSPopUpButton {
         let pp = NSPopUpButton(frame: .zero, pullsDown: false)
         pp.isBordered = false
         pp.controlSize = .small
         pp.font = .systemFont(ofSize: 11)
+        pp.autoenablesItems = false
         (pp.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtCenter
-        for entry in pickerEntries(projects: projects, defaultRoot: config.threadCwd) {
-            // Its own action, since Tab pops the menu up outside the button.
-            let item = NSMenuItem(title: entry.name, action: #selector(pickedProject(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = SendTarget.newThread(root: entry.root)
-            item.toolTip = entry.toolTip
-            pp.menu?.addItem(item)
-        }
-        let threads = threadEntries(loadThreads(databasePath: config.t3Database))
-        if !threads.isEmpty {
-            pp.menu?.addItem(.separator())
-            let h = NSMenuItem(title: "Add to an open thread", action: nil, keyEquivalent: "")
+        func header(_ title: String) {
+            let h = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             h.isEnabled = false
             pp.menu?.addItem(h)
         }
-        for entry in threads {
-            let item = NSMenuItem(title: entry.name, action: #selector(pickedProject(_:)), keyEquivalent: "")
+        func add(_ name: String, _ target: SendTarget, _ toolTip: String, indent: Bool) -> NSMenuItem {
+            // Its own action, since Tab pops the menu up outside the button.
+            let item = NSMenuItem(title: name, action: #selector(pickedProject(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = SendTarget.thread(id: entry.id)
-            item.toolTip = entry.toolTip
-            item.indentationLevel = 1
+            item.representedObject = target
+            item.toolTip = toolTip
+            item.indentationLevel = indent ? 1 : 0
             pp.menu?.addItem(item)
+            return item
         }
-        pp.autoenablesItems = false
+        let threads = threadEntries(loadThreads(databasePath: config.t3Database))
+        if !threads.isEmpty {
+            header("Add to an open thread")
+            for entry in threads { _ = add(entry.name, .thread(id: entry.id), entry.toolTip, indent: true) }
+            pp.menu?.addItem(.separator())
+            header("New thread in")
+        }
+        let items = pickerEntries(projects: projects, defaultRoot: config.threadCwd).map {
+            add($0.name, .newThread(root: $0.root), $0.toolTip, indent: !threads.isEmpty)
+        }
+        if let first = items.first { pp.select(first) }
         pp.toolTip = "T3 project for the new thread, or an open thread to add to (Tab)"
         menuObservers += holdOpen(while: pp.menu!)
         return pp
