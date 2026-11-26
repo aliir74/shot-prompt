@@ -72,6 +72,7 @@ public func pickerEntries(projects: [Project], defaultRoot: String) -> [PickerEn
 }
 
 // The hint next to the picker; shorter when the picker takes room.
-public func statusHint(hasProjects: Bool) -> String {
-    hasProjects ? "↩ new thread · ⇥ project · esc" : "↩ new T3 thread · esc dismiss"
+public func statusHint(hasProjects: Bool, target: Target = .command) -> String {
+    let name = target == .command ? "new thread" : target.title
+    return hasProjects ? "↩ \(name) · ⇥ project · esc" : "↩ \(name) · esc dismiss"
 }

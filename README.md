@@ -3,14 +3,33 @@
 [![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/aliir74)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/aliir74)
 
-Take a screenshot (macOS's own Cmd+Shift+4, or [Shottr](https://shottr.cc)), start typing (or click the icon), press Enter: a new [T3 Code](https://t3.codes) thread opens with the screenshot and your prompt.
+Take a screenshot (macOS's own Cmd+Shift+4, or [Shottr](https://shottr.cc)), start typing (or click the icon), press Enter: your screenshot and prompt go to the AI tool you use, in the project you are working on.
+
+## Send to
+
+Pick where Enter sends in the menu bar menu (the viewfinder icon), under **Send to**. On first launch ShotPrompt picks the first one it finds installed, in this order:
+
+| Target | What happens |
+| --- | --- |
+| Claude Code | A new terminal window opens in the project folder and runs `claude` with your prompt and the screenshot paths (their folder is added with `--add-dir`, so reading them asks nothing). |
+| Codex | Same, with `codex --image <screenshot> -- <prompt>`. |
+| Cursor Agent | Same, with `cursor-agent` and the screenshot paths. |
+| Claude app | The Claude desktop app comes forward, opens a new chat, and gets the screenshot and prompt pasted in. You press Enter there. |
+| ChatGPT app | Same, in the ChatGPT desktop app. |
+| Clipboard | The screenshots and prompt go on the clipboard: the first screenshot and the prompt as one item (a chat box pastes the image, a text field the prompt), then one item per other screenshot. The default when none of the others is installed. |
+| Custom command (T3 Code) | Runs `$SHOT_PROMPT_DISPATCH` (see [Dispatch command](#dispatch-command)); with a T3 dispatcher, a new [T3 Code](https://t3.codes) thread opens. An install with `SHOT_PROMPT_DISPATCH` set starts here. |
+
+- Terminal targets open a `.command` file, so they use the app your Mac opens those with (Terminal, or iTerm if you set it). The CLI is looked up in `~/.local/bin`, Homebrew and the usual npm/bun folders; if it is elsewhere, your shell's PATH finds it.
+- Screenshots are copied to `~/Library/Caches/ShotPrompt/sent` as `shot-1.png` and so on (macOS's own names hold special spaces an agent can retype wrong) for the tool to read, and removed after a day.
+- The chat app targets post Cmd+N and Cmd+V to the app, which needs Accessibility. Until you allow it, Enter asks for it and keeps the panel open with what you typed.
+- The project picker lists your T3 projects (when T3 is installed), the folders you sent to before, and folders you add with **Add project folder…**. The chat app targets have no project, so no picker.
 
 - Watches the folder macOS saves screenshots to (the Desktop, or what you set in the Screenshot app's Options) and `~/Pictures` for Shottr (turn on its "save after capture"). A new PNG, JPEG or HEIC counts when it is tagged as a screen capture (macOS and Shottr both tag their files) and was made in the last minute, so an old screenshot moved in does not. macOS asks once for access to the Desktop folder. With the floating thumbnail on, macOS saves the file when the thumbnail goes, so swipe it away for the icon to come at once.
 - Shows a small thumbnail icon by the mouse, where the capture region ended. Typing, or clicking the icon, opens the prompt panel. Both take the keyboard without bringing the app forward. No Input Monitoring permission is needed. Accessibility is optional: the window title, page address and project pick in [context](#context-and-privacy), and the [paste into T3](#paste-into-t3) setting, need it.
 - The icon leaves 3 seconds after you switch to another app, so you can still click it on the way. Esc, a Cmd/Ctrl shortcut, or 20 seconds idle removes it.
 - Each capture also sends where it came from (app, window title, page address or file), shown as chips you can remove before sending. See [Context and privacy](#context-and-privacy).
-- The project picker at the bottom right says which T3 project gets the thread. It starts on the project the captured window belongs to when that is clear, else on `$SHOT_PROMPT_CWD`; Tab (or a click) opens the list of your T3 projects, pinned first, then most recently used. Arrow keys or type-to-select, then Enter, pick one.
-- Enter runs `$SHOT_PROMPT_DISPATCH --cwd <project folder> --image <capture> [--image <more>…] "<prompt>"`.
+- The project picker at the bottom right says which project folder the prompt goes to. It starts on the project the captured window belongs to when that is clear, else on `$SHOT_PROMPT_CWD`, else the last folder you sent to; Tab (or a click) opens the list: your T3 projects, pinned first, then most recently used, then your other folders. Arrow keys or type-to-select, then Enter, pick one.
+- Enter sends to the [target](#send-to) you picked.
 - Before you type in the panel, Esc, switching to another app, or 5 seconds idle closes it. Once you have typed, only Esc closes it: switching apps leaves it on screen with your text (click it to keep typing), and a new capture joins the prompt as another screenshot (up to 4; click its "Capture N" chip to take it out). The usual edit shortcuts (Cmd+V, Cmd+A, Cmd+C, Cmd+X, Cmd+Z) work in the panel, empty or not. If Shottr also copies captures, the first Cmd+V while only the icon shows removes the icon; press it again to paste.
 - Dictation (Wispr Flow): holding Fn, or Wispr recording from the microphone (any hotkey, or hands-free mode), opens the prompt from the icon. An empty prompt stays open while you dictate and for 10 seconds after, so the words have time to arrive.
 

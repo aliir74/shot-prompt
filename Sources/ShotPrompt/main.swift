@@ -33,6 +33,7 @@
 import AppKit
 import Carbon.HIToolbox
 import CoreAudio
+import ServiceManagement
 import ShotPromptCore
 
 // Posted by the settings menu after each change, so an open panel follows it.
@@ -41,6 +42,61 @@ let settingsChangedNotification = Notification.Name("ShotPromptSettingsChanged")
 let config = Config(environment: ProcessInfo.processInfo.environment,
                     home: FileManager.default.homeDirectoryForCurrentUser,
                     screenshotLocation: UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location"))
+
+// Where Enter sends: read at every use, so a change in the menu applies at once.
+func currentTarget() -> Target {
+    currentTarget(stored: UserDefaults.standard.string(forKey: targetKey),
+                  dispatchFromEnvironment: config.dispatchFromEnvironment, isInstalled: isInstalled)
+}
+
+func isInstalled(_ t: Target) -> Bool {
+    if let cli = t.executable { return cliPath(cli) != nil }
+    if t.isChatApp { return appURL(t) != nil }
+    if t == .clipboard { return true }
+    return FileManager.default.isExecutableFile(atPath: config.dispatchBin)
+}
+
+// The chat app's bundle, by the first of its bundle IDs found.
+func appURL(_ t: Target) -> URL? {
+    t.bundleIDs.lazy.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first
+}
+
+// The screenshots and prompt on the clipboard: the first image and the
+// prompt in one item (a chat box takes the image, a text field the prompt),
+// then one item per other image. Main thread.
+func copyToClipboard(images: [URL], prompt: String) -> Bool {
+    let pngs = images.compactMap(pngData(of:))
+    guard let first = pngs.first else { return false }
+    let item = NSPasteboardItem()
+    item.setData(first, forType: .png)
+    item.setString(prompt, forType: .string)
+    let rest = pngs.dropFirst().map { png -> NSPasteboardItem in
+        let i = NSPasteboardItem()
+        i.setData(png, forType: .png)
+        return i
+    }
+    NSPasteboard.general.clearContents()
+    return NSPasteboard.general.writeObjects([item] + rest)
+}
+
+func cliPath(_ name: String) -> String? {
+    findExecutable(name, in: cliSearchPath(home: config.home))
+}
+
+var recentFolders: [String] { UserDefaults.standard.stringArray(forKey: recentFoldersKey) ?? [] }
+
+// T3's projects (when T3 is there) and the folders you sent to.
+func allProjects() -> [Project] {
+    mergeProjects(t3: loadProjects(databasePath: config.t3Database), recent: recentFolders)
+}
+
+func defaultFolder() -> String {
+    startFolder(environment: config.cwdFromEnvironment, recent: recentFolders, home: config.home)
+}
+
+// Screenshots copied for a CLI or chat app to read after the panel is gone; kept a day.
+let stagedRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("ShotPrompt/sent")
 
 final class PromptPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -165,6 +221,8 @@ final class Controller: NSObject, NSTextViewDelegate {
     // back) would otherwise skip the second and leave the first's height.
     private var panelTarget: CGFloat = 0
     private var projects: [Project] = []
+    // The target the open panel was built for: its hint and picker say so, so Enter sends there.
+    private var sendTarget: Target?
     // You chose a project in the picker, so the window no longer picks one.
     private var pickedByHand = false
     // Chips you removed, kept out when a settings change rebuilds the context.
@@ -785,7 +843,9 @@ final class Controller: NSObject, NSTextViewDelegate {
                 forName: name, object: clip, queue: .main) { [weak self] _ in self?.updateFade() })
         }
 
-        projects = loadProjects(databasePath: config.t3Database)
+        let target = currentTarget()
+        sendTarget = target
+        projects = target.usesProject ? allProjects() : []
         let gear = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")!,
                             target: self, action: #selector(openSettings(_:)))
         gear.isBordered = false
@@ -794,13 +854,13 @@ final class Controller: NSObject, NSTextViewDelegate {
         gear.frame = NSRect(x: x - 2, y: 10, width: 18, height: 18)
         gear.toolTip = "What each capture sends, and other settings"
         content.addSubview(gear)
-        let s = NSTextField(labelWithString: statusHint(hasProjects: !projects.isEmpty))
+        let s = NSTextField(labelWithString: statusHint(hasProjects: target.usesProject, target: target))
         s.frame = NSRect(x: x + 20, y: 12, width: w - 20, height: 16)
         s.font = .systemFont(ofSize: 11)
         s.textColor = .secondaryLabelColor
         s.lineBreakMode = .byTruncatingTail
         content.addSubview(s)
-        if !projects.isEmpty {
+        if target.usesProject {
             let pp = makePicker(projects)
             pp.frame = NSRect(x: x, y: 8, width: w, height: 22)
             content.addSubview(pp)
@@ -830,7 +890,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         pp.controlSize = .small
         pp.font = .systemFont(ofSize: 11)
         (pp.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtCenter
-        for entry in pickerEntries(projects: projects, defaultRoot: config.threadCwd) {
+        for entry in pickerEntries(projects: projects, defaultRoot: defaultFolder()) {
             // Its own action, since Tab pops the menu up outside the button.
             let item = NSMenuItem(title: entry.name, action: #selector(pickedProject(_:)), keyEquivalent: "")
             item.target = self
@@ -838,7 +898,7 @@ final class Controller: NSObject, NSTextViewDelegate {
             item.toolTip = entry.toolTip
             pp.menu?.addItem(item)
         }
-        pp.toolTip = "T3 project for the new thread (Tab)"
+        pp.toolTip = "Project folder to work in (Tab). Add folders in the menu bar menu."
         menuObservers += holdOpen(while: pp.menu!)
         return pp
     }
@@ -1030,17 +1090,20 @@ final class Controller: NSObject, NSTextViewDelegate {
         guard let typed = sendablePrompt(f.string) else { return }
         let prompt = promptWithContext(typed, context, captures: 1 + extraImages.count)
         let images = [url] + [context.windowShot].compactMap { $0 } + extraImages
-        let cwd = picker?.selectedItem?.representedObject as? String ?? config.threadCwd
+        let cwd = picker?.selectedItem?.representedObject as? String ?? defaultFolder()
         f.isEditable = false
         picker?.isEnabled = false
         chipViews.forEach { $0.isEnabled = false }
         status?.stringValue = "launching…"
+        let target = sendTarget ?? currentTarget()
+        if target.usesProject {
+            UserDefaults.standard.set(rememberFolder(cwd, in: recentFolders), forKey: recentFoldersKey)
+        }
         DispatchQueue.global().async {
-            let (ok, out) = dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
-                                     environment: config.environment, home: config.home)
+            let (ok, out) = Self.deliver(target, prompt: prompt, images: images, cwd: cwd)
             DispatchQueue.main.async {
                 if ok {
-                    // The thread is already open in T3; vanish at once, no fade.
+                    // The thread or terminal is already open; vanish at once, no fade.
                     self.panel?.animationBehavior = .none
                     self.dismiss()
                 } else {
@@ -1054,6 +1117,48 @@ final class Controller: NSObject, NSTextViewDelegate {
                 }
             }
         }
+    }
+
+    // Sends to the target, off the main thread. A terminal or chat app gets
+    // copies of the images, since the window shot is deleted when the panel goes.
+    private static func deliver(_ target: Target, prompt: String, images: [URL], cwd: String)
+        -> (ok: Bool, output: String) {
+        switch target {
+        case .command:
+            return dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
+                            environment: config.environment, home: config.home)
+        case .clipboard:
+            let copied = DispatchQueue.main.sync { copyToClipboard(images: images, prompt: prompt) }
+            return copied ? (true, "") : (false, "cannot read the screenshot")
+        case .claudeApp, .chatGPT:
+            // Without Accessibility the keys cannot reach the app: say so and keep what you typed.
+            let ask = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            guard AXIsProcessTrustedWithOptions(ask) else {
+                return (false, "allow ShotPrompt in Privacy & Security > Accessibility, then press Enter again")
+            }
+        case .claudeCode, .codex, .cursorAgent:
+            break
+        }
+        pruneStaged(in: stagedRoot, now: Date(), maxAge: 24 * 3600)
+        let folder = stagedRoot.appendingPathComponent(UUID().uuidString)
+        let staged: [URL]
+        do { staged = try stageImages(images, in: folder) } catch { return (false, error.localizedDescription) }
+        if target.isChatApp {
+            guard let app = appURL(target) else {
+                return (false, "\(target.title) is not installed")
+            }
+            DispatchQueue.main.async { ChatPaster.paste(images: staged, prompt: prompt, into: app) }
+            return (true, "")
+        }
+        let script = folder.appendingPathComponent("ShotPrompt.command")
+        let text = terminalScript(target, executable: target.executable.flatMap(cliPath), prompt: prompt,
+                                  images: staged, cwd: cwd)
+        do {
+            try text.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        } catch { return (false, error.localizedDescription) }
+        // The default app for .command files: Terminal, or iTerm or another that took them.
+        return NSWorkspace.shared.open(script) ? (true, "") : (false, "could not open a terminal")
     }
 
     private func dismiss() {
@@ -1110,6 +1215,21 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let s = ContextSettings(value: { UserDefaults.standard.object(forKey: $0) })
+        let target = currentTarget()
+        let sendTo = NSMenuItem(title: "Send to: \(target.title)", action: nil, keyEquivalent: "")
+        sendTo.submenu = targetsMenu(target)
+        menu.addItem(sendTo)
+        let add = NSMenuItem(title: "Add project folder…", action: #selector(addFolder), keyEquivalent: "")
+        add.target = self
+        add.toolTip = "Folders show in the panel's picker; the ones you send to are added on their own."
+        menu.addItem(add)
+        if !runByLaunchAgent {
+            let login = NSMenuItem(title: "Open at login", action: #selector(flipLogin), keyEquivalent: "")
+            login.target = self
+            login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            menu.addItem(login)
+        }
+        menu.addItem(.separator())
         menu.addItem(header("Send with each capture"))
         menu.addItem(toggle("App name", ContextSettingKey.app, s.app))
         menu.addItem(toggle("Window title", ContextSettingKey.title, s.title, needsAX: true))
@@ -1146,6 +1266,50 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
                                 action: #selector(openScreenRecording), keyEquivalent: "")
             sr.target = self
             menu.addItem(sr)
+        }
+    }
+
+    // Every target; one not installed is shown, and disabled, so you know it exists.
+    private func targetsMenu(_ current: Target) -> NSMenu {
+        let menu = NSMenu()
+        for t in Target.allCases {
+            let installed = isInstalled(t)
+            // A CLI not found here may still be on your shell's PATH (nvm, asdf), so it stays pickable.
+            let pickable = installed || t.executable != nil
+            let m = NSMenuItem(title: installed ? t.title : "\(t.title) (not found)",
+                               action: pickable ? #selector(pickTarget(_:)) : nil, keyEquivalent: "")
+            m.target = self
+            m.state = t == current ? .on : .off
+            m.representedObject = t.rawValue
+            if t == .command { m.toolTip = config.dispatchBin }
+            menu.addItem(m)
+        }
+        return menu
+    }
+
+    @objc private func pickTarget(_ m: NSMenuItem) {
+        UserDefaults.standard.set(m.representedObject as? String, forKey: targetKey)
+    }
+
+    @objc private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK else { return }
+        var list = recentFolders
+        for url in panel.urls.reversed() { list = rememberFolder(url.path, in: list) }
+        UserDefaults.standard.set(list, forKey: recentFoldersKey)
+    }
+
+    @objc private func flipLogin() {
+        do {
+            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
+            else { try SMAppService.mainApp.register() }
+        } catch {
+            NSLog("ShotPrompt: open at login: %@", error.localizedDescription)
         }
     }
 
@@ -1225,8 +1389,101 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
     }
 }
 
+// Pastes screenshots and a prompt into a desktop chat app: it comes
+// forward, Cmd+N opens a new chat, then each image and the prompt go in
+// through the clipboard and Cmd+V. You read it over and press Enter there.
+// Posting keys needs Accessibility, which the send checks first. Should the
+// app not open, or the grant go in between, everything goes on the clipboard.
+enum ChatPaster {
+    static func paste(images: [URL], prompt: String, into appURL: URL) {
+        let trusted = AXIsProcessTrusted()
+        let pb = NSPasteboard.general
+        let open = NSWorkspace.OpenConfiguration()
+        open.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: open) { app, error in
+            DispatchQueue.main.async {
+                // The panel is gone by now, so nothing you typed may be lost: it all goes on the clipboard.
+                guard trusted, let app else {
+                    _ = copyToClipboard(images: images, prompt: prompt)
+                    NSLog("ShotPrompt: could not paste into %@ (%@); the screenshots and prompt are on the clipboard",
+                          appURL.lastPathComponent, error?.localizedDescription ?? "no Accessibility")
+                    return
+                }
+                var steps: [() -> Void] = [{ key(kVK_ANSI_N, to: app) }]
+                for url in images {
+                    guard let png = pngData(of: url) else { continue }
+                    steps.append { pb.clearContents(); pb.setData(png, forType: .png); key(kVK_ANSI_V, to: app) }
+                }
+                steps.append { pb.clearContents(); pb.setString(prompt, forType: .string); key(kVK_ANSI_V, to: app) }
+                run(steps, waitingFor: app, deadline: Date().addingTimeInterval(5))
+            }
+        }
+    }
+
+    // Waits for the app to be in front (it may still be starting), then runs
+    // each step with a pause, so the chat has taken the last paste.
+    private static func run(_ steps: [() -> Void], waitingFor app: NSRunningApplication, deadline: Date) {
+        guard app.isActive || Date() > deadline else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { run(steps, waitingFor: app, deadline: deadline) }
+            return
+        }
+        for (i, step) in steps.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4 + Double(i) * 0.5, execute: step)
+        }
+    }
+
+    private static func key(_ code: Int, to app: NSRunningApplication) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(code), keyDown: down)
+            event?.flags = .maskCommand
+            event?.postToPid(app.processIdentifier)
+        }
+    }
+}
+
+// build.sh's LaunchAgent starts this app and restarts it; it needs no login item.
+let runByLaunchAgent = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == "io.github.aliir74.shot-prompt"
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+// One copy at a time: a login item and the LaunchAgent could both start one.
+if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+    .contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+    NSLog("ShotPrompt is already running")
+    exit(0)
+}
+pruneStaged(in: stagedRoot, now: Date(), maxAge: 24 * 3600)
+// The first launch from a download opens at login from then on; the menu turns it off.
+let loginItemOfferedKey = "loginItemOffered"
+let inApplications = isInApplicationsFolder(Bundle.main.bundlePath, home: config.home)
+if !runByLaunchAgent && inApplications && !UserDefaults.standard.bool(forKey: loginItemOfferedKey) {
+    do {
+        try SMAppService.mainApp.register()
+        // Only once it worked: a later launch tries again. Turning it off in the menu sticks.
+        UserDefaults.standard.set(true, forKey: loginItemOfferedKey)
+    } catch {
+        NSLog("ShotPrompt: open at login: %@", error.localizedDescription)
+    }
+}
+// Screenshots sent to a CLI or chat app go after a day, also while the app keeps running.
+let pruneTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
+    pruneStaged(in: stagedRoot, now: Date(), maxAge: 24 * 3600)
+}
+// Said once, on the first launch outside the LaunchAgent: what to do, and where the settings are.
+let welcomedKey = "welcomed"
+if !runByLaunchAgent && Bundle.main.bundleIdentifier != nil && !UserDefaults.standard.bool(forKey: welcomedKey) {
+    // Run from the disk image or Downloads, it says so every launch until moved.
+    if inApplications { UserDefaults.standard.set(true, forKey: welcomedKey) }
+    // Once the run loop is up, so the alert comes forward like any app's.
+    DispatchQueue.main.async {
+        let alert = NSAlert()
+        alert.messageText = "ShotPrompt is running"
+        alert.informativeText = welcomeText(target: currentTarget(), inApplications: inApplications)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+}
 let controller = Controller()
 controller.start()
 let settingsMenu = SettingsMenu()
@@ -1239,7 +1496,7 @@ if let settings = receiverSettings(port: UserDefaults.standard.integer(forKey: r
                                    token: UserDefaults.standard.string(forKey: receiverTokenKey)) {
     let context = ReceiverContext(
         token: settings.token, defaultRoot: config.threadCwd,
-        projects: { loadProjects(databasePath: config.t3Database) },
+        projects: { allProjects() },
         saveImage: imageSaver(dir: FileManager.default.temporaryDirectory.appendingPathComponent("ShotPrompt-phone")),
         dispatch: { prompt, image, cwd in
             dispatch(executable: config.dispatchBin, prompt: prompt, images: [image], cwd: cwd,

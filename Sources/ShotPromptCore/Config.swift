@@ -12,6 +12,10 @@ public struct Config {
     public let dispatchBin: String
     // The project folder the new thread opens in, unless you pick another.
     public let threadCwd: String
+    // `$SHOT_PROMPT_CWD`, when set.
+    public let cwdFromEnvironment: String?
+    // Whether `$SHOT_PROMPT_DISPATCH` is set: an install that sends to its own command.
+    public let dispatchFromEnvironment: Bool
     // T3 Code's database, read only for its list of projects.
     public let t3Database: String
 
@@ -25,6 +29,8 @@ public struct Config {
         dispatchBin = environment["SHOT_PROMPT_DISPATCH"]
             ?? home.appendingPathComponent(".local/bin/t3-dispatch").path
         threadCwd = environment["SHOT_PROMPT_CWD"] ?? home.path
+        cwdFromEnvironment = environment["SHOT_PROMPT_CWD"]
+        dispatchFromEnvironment = environment["SHOT_PROMPT_DISPATCH"] != nil
         t3Database = environment["SHOT_PROMPT_T3_DB"]
             ?? home.appendingPathComponent(".t3/userdata/statev2.sqlite").path
     }
