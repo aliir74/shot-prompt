@@ -81,13 +81,16 @@ public func readStep(buffer: Data, data: Data?, closed: Bool, maxBody: Int) -> R
 }
 
 // One log line per reply: "POST /shot -> 502 dispatch failed: …". The message
-// comes from a JSON reply's "message" or a text body, on one line, capped.
+// comes from a JSON reply's "message" (plus its "appLink") or a text body, on one line, capped.
 // Never the request body or headers: they hold the image and the token.
 public func replyLogLine(_ request: HTTPRequest?, _ response: HTTPResponse, cap: Int = 600) -> String {
     let route = request.map { "\($0.method) \($0.path)" } ?? "unparsed request"
-    let message = response.contentType == "application/json"
-        ? ((try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any])?["message"] as? String ?? ""
-        : String(decoding: response.body, as: UTF8.self)
+    let json = response.contentType == "application/json"
+        ? (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any] : nil
+    var message = json == nil && response.contentType != "application/json"
+        ? String(decoding: response.body, as: UTF8.self) : json?["message"] as? String ?? ""
+    // The thread a shot opened, so "the link opened the wrong thread" can be checked.
+    if let link = json?["appLink"] as? String { message += " " + link }
     var line = "\(route) -> \(response.status)"
     let flat = message.split(whereSeparator: \.isNewline).joined(separator: " | ")
     if !flat.isEmpty { line += " " + (flat.count > cap ? String(flat.prefix(cap)) + "…" : flat) }

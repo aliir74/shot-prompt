@@ -121,5 +121,8 @@ final class ReceiverServerTests: XCTestCase {
         XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 200, json: Data("{}".utf8))), "GET /projects -> 200")
         XCTAssertEqual(replyLogLine(nil, HTTPResponse(status: 400, text: "a\nb")), "unparsed request -> 400 a | b")
         XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 502, message: "abcdef"), cap: 3), "GET /projects -> 502 abc…")
+        XCTAssertEqual(replyLogLine(HTTPRequest(method: "POST", path: "/shot"),
+                                    HTTPResponse(status: 200, message: "Started.", extra: ["appLink": "t3code://threads/e/t"])),
+                       "POST /shot -> 200 Started. t3code://threads/e/t")
     }
 }
