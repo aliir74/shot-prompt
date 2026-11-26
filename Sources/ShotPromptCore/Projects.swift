@@ -77,11 +77,14 @@ public struct OpenThread: Equatable {
     public let title: String
     // The title of its project.
     public let project: String
+    // Its last activity; nil when T3's date has no time in it.
+    public let updatedAt: Date?
 
-    public init(id: String, title: String, project: String) {
+    public init(id: String, title: String, project: String, updatedAt: Date? = nil) {
         self.id = id
         self.title = title
         self.project = project
+        self.updatedAt = updatedAt
     }
 }
 
@@ -98,7 +101,7 @@ public func loadThreads(databasePath: String, limit: Int = maxThreads) -> [OpenT
     guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK else { return [] }
     sqlite3_busy_timeout(db, 500)
     let sql = """
-        SELECT t.thread_id, t.title, p.title FROM orchestration_v2_projection_threads t
+        SELECT t.thread_id, t.title, p.title, coalesce(t.updated_at, '') FROM orchestration_v2_projection_threads t
         JOIN projection_projects p ON p.project_id = t.project_id
         WHERE t.thread_id IS NOT NULL AND t.title IS NOT NULL AND p.title IS NOT NULL
           AND t.deleted_at IS NULL AND t.archived_at IS NULL
@@ -118,7 +121,7 @@ public func loadThreads(databasePath: String, limit: Int = maxThreads) -> [OpenT
     // The query leaves out NULLs, so every column has text.
     func text(_ column: Int32) -> String { String(cString: sqlite3_column_text(stmt, column)) }
     while sqlite3_step(stmt) == SQLITE_ROW {
-        rows.append(OpenThread(id: text(0), title: text(1), project: text(2)))
+        rows.append(OpenThread(id: text(0), title: text(1), project: text(2), updatedAt: parseT3Date(text(3))))
     }
     return rows
 }

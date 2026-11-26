@@ -200,6 +200,18 @@ final class ThreadTests: XCTestCase {
         XCTAssertEqual(loadThreads(databasePath: path, limit: 1).map(\.id), ["new"])
     }
 
+    func testActivityTime() throws {
+        let path = try makeDB(schema + [
+            thread("timed", "Timed", updated: "2026-03-01T10:00:00.500Z"),
+            thread("plain", "Plain", updated: "2026-01-01"),
+        ])
+        let threads = loadThreads(databasePath: path)
+        XCTAssertEqual(threads.map(\.id), ["timed", "plain"])
+        XCTAssertNotNil(threads[0].updatedAt)
+        XCTAssertEqual(threads[0].updatedAt, parseT3Date("2026-03-01T10:00:00.500Z"))
+        XCTAssertNil(threads[1].updatedAt)
+    }
+
     func testMissingDatabaseOrTables() throws {
         XCTAssertEqual(loadThreads(databasePath: dir.appendingPathComponent("none.sqlite").path), [])
         XCTAssertEqual(loadThreads(databasePath: try makeDB(["CREATE TABLE other (x)"])), [])
