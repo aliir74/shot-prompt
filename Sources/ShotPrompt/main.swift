@@ -14,8 +14,11 @@
 // panel; once you have typed, only Esc does. Cmd shortcuts in the panel edit
 // the prompt. Dictation (holding Fn, or Wispr Flow using the microphone with
 // any hotkey or hands-free) opens the prompt from the icon and keeps an empty
-// prompt open while you talk and a little after. The project
-// picker in the panel (Tab, or click it) sends the thread to another T3 project.
+// prompt open while you talk and a little after. A chip at the bottom right
+// names where Enter sends: blue for one of T3's open threads, grey for a new
+// thread in a project. Tab or a click on it opens a search popup under the
+// panel (open threads, then projects); it takes the keys without bringing
+// this app forward, and Esc closes it before the panel.
 // With the pasteIntoT3 setting on, a capture taken in T3 Code skips all of
 // that and lands in the chat open there, as if you pressed Cmd+V in it,
 // on a new line when text comes before the caret.
@@ -90,6 +93,24 @@ func allProjects() -> [Project] {
     mergeProjects(t3: loadProjects(databasePath: config.t3Database), recent: recentFolders)
 }
 
+// The folder dialog behind "Add project folder…", in the menu bar menu and
+// the panel's popup: the folders you choose join the recent ones. Returns
+// them, first chosen first; empty when you cancel.
+func chooseProjectFolders() -> [String] {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = true
+    panel.prompt = "Add"
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK else { return [] }
+    let paths = panel.urls.map(\.path)
+    var list = recentFolders
+    for path in paths.reversed() { list = rememberFolder(path, in: list) }
+    UserDefaults.standard.set(list, forKey: recentFoldersKey)
+    return paths
+}
+
 func defaultFolder() -> String {
     startFolder(environment: config.cwdFromEnvironment, recent: recentFolders, home: config.home)
 }
@@ -99,7 +120,9 @@ let stagedRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomain
     .appendingPathComponent("ShotPrompt/sent")
 
 final class PromptPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    // Off while "✓ Added to" shows, so the keys go back to the app in front.
+    var keyable = true
+    override var canBecomeKey: Bool { keyable }
 
     // Cmd+A, Cmd+V and the other edit shortcuts, which a menu bar would map.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -170,6 +193,224 @@ final class TopClipView: NSClipView {
     }
 }
 
+// A layer cornerRadius leaves the blur's square corners drawn as white; a
+// mask image clips the material itself and the window shadow follows it. The
+// corners are cap insets, so the mask stretches when the window resizes.
+func roundedMask(size: NSSize, radius: CGFloat) -> NSImage {
+    let image = NSImage(size: size, flipped: false) { r in
+        NSColor.black.setFill()
+        NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+        return true
+    }
+    image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+    image.resizingMode = .stretch
+    return image
+}
+
+// The popup's list never takes the keys: they stay in the search field.
+final class PopupTable: NSTableView {
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+// Draws the selection in the accent colour although the table is not the
+// first responder.
+final class PopupRowView: NSTableRowView {
+    override var isEmphasized: Bool {
+        get { true }
+        set {}
+    }
+}
+
+// One row: a thread's title with its project and time ago on the right, a
+// project's name, a section header, or the add-folder row. A table cell view passes the selected
+// row's style to its labels, so they turn light on the accent colour.
+final class PopupCell: NSTableCellView {
+    private let title: NSTextField
+    private let detail: NSTextField?
+
+    init(_ row: PopupRow) {
+        switch row {
+        case .header(let text):
+            title = NSTextField(labelWithString: text)
+            title.font = .systemFont(ofSize: 11, weight: .semibold)
+            title.textColor = .secondaryLabelColor
+            detail = nil
+        case .item(let item):
+            title = NSTextField(labelWithString: item.title)
+            title.font = .systemFont(ofSize: 13)
+            if item.detail.isEmpty {
+                detail = nil
+            } else {
+                let d = NSTextField(labelWithString: item.detail)
+                d.font = .systemFont(ofSize: 11)
+                d.textColor = .secondaryLabelColor
+                d.alignment = .right
+                detail = d
+            }
+        case .addFolder:
+            title = NSTextField(labelWithString: addFolderTitle)
+            title.font = .systemFont(ofSize: 13)
+            title.textColor = .secondaryLabelColor
+            detail = nil
+        }
+        title.lineBreakMode = .byTruncatingTail
+        super.init(frame: .zero)
+        addSubview(title)
+        if let d = detail { addSubview(d) }
+        if case .item(let item) = row { toolTip = item.toolTip }
+        if case .addFolder = row { toolTip = addFolderToolTip }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func layout() {
+        super.layout()
+        let h = bounds.height, inset: CGFloat = 10
+        var right = bounds.width - inset
+        if let d = detail {
+            let w = ceil(d.fittingSize.width)
+            d.frame = NSRect(x: right - w, y: (h - d.fittingSize.height) / 2, width: w, height: d.fittingSize.height)
+            right -= w + 8
+        }
+        let th = title.fittingSize.height
+        title.frame = NSRect(x: inset, y: (h - th) / 2, width: max(right - inset, 0), height: th)
+    }
+}
+
+// The target popup under the panel: a search field over a list of open
+// threads and projects. It is a non-activating panel too, so it takes the
+// keys without bringing this app forward. Every decision is in Core
+// (popupRows, popupCommand, movedSelection); this only shows the rows.
+final class TargetPopup: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    let window: PromptPanel
+    let search: NSTextField
+    private let table = PopupTable()
+    var rowsFor: (String) -> [PopupRow] = { _ in [] }
+    var onPick: (PopupChoice) -> Void = { _ in }
+    var onClose: () -> Void = {}
+    var onResize: () -> Void = {}
+    private(set) var rows: [PopupRow] = []
+    private var selected: Int?
+
+    override init() {
+        let width = PanelMetrics.width, height: CGFloat = 200
+        window = PromptPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+                             styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+        window.level = .floating
+        window.hidesOnDeactivate = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.hasShadow = true
+
+        let content = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        content.material = .hudWindow
+        content.state = .active
+        content.maskImage = roundedMask(size: NSSize(width: 25, height: 25), radius: 12)
+        window.contentView = content
+
+        let sh = PopupMetrics.searchHeight
+        search = NSTextField(frame: NSRect(x: 12, y: height - sh + (sh - 20) / 2, width: width - 24, height: 20))
+        search.isBordered = false
+        search.drawsBackground = false
+        search.focusRingType = .none
+        search.font = .systemFont(ofSize: 13)
+        search.cell?.isScrollable = true
+        search.cell?.wraps = false
+        search.autoresizingMask = [.width, .minYMargin]
+        content.addSubview(search)
+
+        let pad = PopupMetrics.padding
+        let sv = NSScrollView(frame: NSRect(x: 0, y: pad / 2, width: width, height: height - sh - pad))
+        sv.drawsBackground = false
+        sv.borderType = .noBorder
+        sv.hasVerticalScroller = true
+        sv.autohidesScrollers = true
+        sv.automaticallyAdjustsContentInsets = false
+        sv.verticalScroller = ThinScroller()
+        sv.autoresizingMask = [.width, .height]
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
+        column.resizingMask = .autoresizingMask
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.style = .plain
+        table.backgroundColor = .clear
+        table.intercellSpacing = .zero
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.selectionHighlightStyle = .regular
+        sv.documentView = table
+        column.width = sv.contentSize.width
+        content.addSubview(sv)
+        super.init()
+        search.delegate = self
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(rowClicked)
+    }
+
+    // The first rows, with the current target selected.
+    func show(_ rows: [PopupRow], selected: Int?) {
+        self.rows = rows
+        self.selected = selected
+        table.reloadData()
+        select()
+    }
+
+    private func select() {
+        guard let i = selected else { return table.deselectAll(nil) }
+        table.selectRowIndexes(IndexSet(integer: i), byExtendingSelection: false)
+        table.scrollRowToVisible(i)
+    }
+
+    // Typing filters the rows and selects the first match.
+    func controlTextDidChange(_ obj: Notification) {
+        let r = rowsFor(search.stringValue)
+        show(r, selected: popupSelection(r, current: nil))
+        onResize()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch popupCommand(NSStringFromSelector(selector)) {
+        case .up:
+            selected = movedSelection(rows, from: selected, by: -1)
+            select()
+        case .down:
+            selected = movedSelection(rows, from: selected, by: 1)
+            select()
+        case .pick:
+            if let c = popupChoice(rows, at: selected) { onPick(c) }
+        case .close:
+            onClose()
+        case .none:
+            return false
+        }
+        return true
+    }
+
+    @objc private func rowClicked() {
+        if let c = popupChoice(rows, at: table.clickedRow) { onPick(c) }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        PopupCell(rows[row])
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { PopupRowView() }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { return PopupMetrics.headerHeight }
+        return PopupMetrics.rowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        popupChoice(rows, at: row) != nil
+    }
+}
+
 final class Controller: NSObject, NSTextViewDelegate {
     private let watchers = config.captureDirs.map { CaptureWatcher(directory: $0) }
     private var icon: PromptPanel?
@@ -179,10 +420,27 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var clipObservers: [NSObjectProtocol] = []
     private var thumbnail: NSImageView?
     private var status: NSTextField?
-    private var picker: NSPopUpButton?
+    private var gear: NSButton?
+    // The chip at the bottom right that names where Enter sends.
+    private var chip: NSButton?
+    // T3's open threads and the projects, read once when the panel opens.
+    private var threads: [OpenThread] = []
+    private var entries: [PickerEntry] = []
+    // Where Enter sends; retarget() works it out from what you picked and
+    // the project the captured window belongs to.
+    private var target: SendTarget = .newThread(root: defaultFolder())
+    private var picked: SendTarget?
+    private var detectedRoot: String?
+    // Where the last send went. It outlives the panel, in memory only.
+    private var lastTarget: LastTarget?
+    // A send into an open thread worked: "✓ Added to" shows until the timer closes the panel.
+    private var noticeTimer: Timer?
+    private var sent = false
+    // The search popup Tab or a chip click opens, and when it last lost the keys.
+    private var popup: TargetPopup?
+    private var popupObserver: NSObjectProtocol?
+    private var popupClosedAt: Date?
     private var menuOpen = false
-    // The app the Tab picker took the front from, until it is back in front.
-    private var returnTo: NSRunningApplication?
     private var menuObservers: [NSObjectProtocol] = []
     private var image: URL?
     private var idleTimer: Timer?
@@ -221,10 +479,9 @@ final class Controller: NSObject, NSTextViewDelegate {
     // back) would otherwise skip the second and leave the first's height.
     private var panelTarget: CGFloat = 0
     private var projects: [Project] = []
-    // The target the open panel was built for: its hint and picker say so, so Enter sends there.
-    private var sendTarget: Target?
-    // You chose a project in the picker, so the window no longer picks one.
-    private var pickedByHand = false
+    // The Send to target the open panel was built for: its hint and chip say
+    // so, so Enter sends there even if the menu changes it meanwhile.
+    private var app: Target?
     // Chips you removed, kept out when a settings change rebuilds the context.
     private var removedKinds = Set<ContextKind>()
     // Captures added while typing, after the first; each shows as a thumbnail chip.
@@ -287,7 +544,7 @@ final class Controller: NSObject, NSTextViewDelegate {
                                 capturedBundleID: app?.bundleIdentifier)
         // A new capture while typing joins the prompt's screenshots. While a
         // send is running, the sent screenshots stay.
-        switch captureAction(hasText: hasText, editable: field?.isEditable ?? true,
+        switch captureAction(hasText: hasText && !sent, editable: field?.isEditable ?? true,
                              count: 1 + extraImages.count, pasteIntoT3: toT3) {
         case .ignore:
             return
@@ -296,6 +553,7 @@ final class Controller: NSObject, NSTextViewDelegate {
             layoutChips()
         case .full:
             status?.stringValue = "\(maxCaptures) captures at most; remove one to add another"
+            layoutStatus()
         case .pasteIntoT3:
             dismiss()
             paste(url, into: app!)
@@ -471,11 +729,32 @@ final class Controller: NSObject, NSTextViewDelegate {
     // Shows the context in the open panel and lets the window pick the project.
     private func applyContext() {
         layoutChips()
-        guard autoProject, !pickedByHand, let pp = picker, let w = window,
-              let root = matchProject(w, serverFolder: serverFolder, projects: projects),
-              let item = pp.itemArray.first(where: { $0.representedObject as? String == root }) else { return }
-        pp.select(item)
-        pp.toolTip = "T3 project for the new thread, picked from the window you captured (Tab to change)"
+        detectedRoot = autoProject
+            ? window.flatMap { matchProject($0, serverFolder: serverFolder, projects: projects) } : nil
+        retarget()
+    }
+
+    // Works out where Enter sends and shows it on the chip: blue for an open
+    // thread, grey for a new thread in a project. Also runs before the panel
+    // exists (from readContext), so the chip may be missing.
+    private func retarget() {
+        let minutes = lastTargetMinutes(UserDefaults.standard.object(forKey: lastTargetMinutesKey))
+        let remembered = rememberedTarget(lastTarget, minutes: minutes, now: Date(), threads: threads, entries: entries)
+        target = resolveTarget(picked: picked, remembered: remembered, detectedRoot: detectedRoot,
+                               entries: entries, defaultRoot: defaultFolder())
+        guard let b = chip else { return }
+        let c = targetChip(target, threads: threads, entries: entries, app: app ?? .command)
+        let text: NSColor = c.toThread ? .systemBlue : .secondaryLabelColor
+        let fill: NSColor = c.toThread ? NSColor.systemBlue.withAlphaComponent(0.2)
+                                       : NSColor.labelColor.withAlphaComponent(0.1)
+        let para = NSMutableParagraphStyle()
+        para.alignment = .center
+        para.lineBreakMode = .byTruncatingTail
+        b.attributedTitle = NSAttributedString(string: c.label, attributes: [
+            .font: b.font ?? .systemFont(ofSize: 11, weight: .medium), .foregroundColor: text, .paragraphStyle: para,
+        ])
+        b.toolTip = c.toolTip
+        b.effectiveAppearance.performAsCurrentDrawingAppearance { b.layer?.backgroundColor = fill.cgColor }
         layoutStatus()
     }
 
@@ -667,13 +946,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         let content = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: size, height: size))
         content.material = .hudWindow
         content.state = .active
-        // A layer cornerRadius leaves the blur's square corners drawn as white;
-        // a mask image clips the material itself and the window shadow follows it.
-        content.maskImage = NSImage(size: content.bounds.size, flipped: false) { r in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: r, xRadius: 12, yRadius: 12).fill()
-            return true
-        }
+        content.maskImage = roundedMask(size: content.bounds.size, radius: 12)
         p.contentView = content
 
         let iv = NSImageView(frame: content.bounds.insetBy(dx: 6, dy: 6))
@@ -705,10 +978,11 @@ final class Controller: NSObject, NSTextViewDelegate {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             let w = event.window
-            let ours = !self.menuOpen && w != nil && (w === self.panel || w === self.icon)
+            let ours = !self.menuOpen && w != nil
+                && (w === self.panel || w === self.icon || w === self.popup?.window)
             switch keyAction(isOurs: ours, isEscape: event.keyCode == 53,
                              commandOrControl: !event.modifierFlags.intersection([.command, .control]).isEmpty,
-                             onIcon: w === self.icon) {
+                             onIcon: w === self.icon, popupOpen: self.popup != nil) {
             case .pass:
                 return event
             case .dismiss:
@@ -717,6 +991,9 @@ final class Controller: NSObject, NSTextViewDelegate {
             case .expandAndType:
                 self.expand()
                 self.field?.keyDown(with: event)
+                return nil
+            case .closePopup:
+                self.closePopup(refocus: true)
                 return nil
             }
         }
@@ -751,13 +1028,13 @@ final class Controller: NSObject, NSTextViewDelegate {
             switch activationAction(
                 activatedPID: app?.processIdentifier, activatedBundleID: app?.bundleIdentifier,
                 ownPID: ProcessInfo.processInfo.processIdentifier,
-                returnToPID: self.returnTo?.processIdentifier,
                 panelOpen: self.panel != nil, iconOpen: self.icon != nil,
                 iconTimeLeft: self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0,
                 dictating: self.dictating) {
             case .none: break
-            case .clearReturn: self.returnTo = nil
-            case .dismissIfEmpty: self.dismissIfEmpty()
+            case .dismissIfEmpty:
+                self.closePopup(refocus: false)
+                self.dismissIfEmpty()
             case .shortenIcon(let seconds): self.armIdle(seconds)
             }
         }
@@ -843,9 +1120,12 @@ final class Controller: NSObject, NSTextViewDelegate {
                 forName: name, object: clip, queue: .main) { [weak self] _ in self?.updateFade() })
         }
 
-        let target = currentTarget()
-        sendTarget = target
-        projects = target.usesProject ? allProjects() : []
+        let app = currentTarget()
+        self.app = app
+        projects = app.usesProject ? allProjects() : []
+        threads = pickerThreads(app: app) { loadThreads(databasePath: config.t3Database) }
+        entries = pickerEntries(projects: projects, defaultRoot: defaultFolder())
+        let hasPicker = app.usesProject
         let gear = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")!,
                             target: self, action: #selector(openSettings(_:)))
         gear.isBordered = false
@@ -854,23 +1134,29 @@ final class Controller: NSObject, NSTextViewDelegate {
         gear.frame = NSRect(x: x - 2, y: 10, width: 18, height: 18)
         gear.toolTip = "What each capture sends, and other settings"
         content.addSubview(gear)
-        let s = NSTextField(labelWithString: statusHint(hasProjects: target.usesProject, target: target))
+        let s = NSTextField(labelWithString: targetHint(hasPicker: hasPicker, app: app))
         s.frame = NSRect(x: x + 20, y: 12, width: w - 20, height: 16)
         s.font = .systemFont(ofSize: 11)
         s.textColor = .secondaryLabelColor
         s.lineBreakMode = .byTruncatingTail
         content.addSubview(s)
-        if target.usesProject {
-            let pp = makePicker(projects)
-            pp.frame = NSRect(x: x, y: 8, width: w, height: 22)
-            content.addSubview(pp)
-            picker = pp
+        var c: NSButton?
+        if hasPicker {
+            let b = NSButton(title: "", target: self, action: #selector(chipClicked))
+            b.isBordered = false
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 10
+            b.font = .systemFont(ofSize: 11, weight: .medium)
+            b.lineBreakMode = .byTruncatingTail
+            b.refusesFirstResponder = true
+            content.addSubview(b)
+            c = b
         }
 
         let screen = i.screen ?? NSScreen.main!
         p.setFrameOrigin(panelOrigin(iconFrame: anchor, panelHeight: p.frame.height, visible: screen.visibleFrame))
 
-        panel = p; field = f; scroll = sv; thumbnail = iv; status = s
+        panel = p; field = f; scroll = sv; thumbnail = iv; status = s; chip = c; self.gear = gear
         layoutStatus()
         applyContext()
         p.orderFrontRegardless()
@@ -881,26 +1167,6 @@ final class Controller: NSObject, NSTextViewDelegate {
             forName: NSWindow.didResignKeyNotification, object: p, queue: .main
         ) { [weak self] _ in self?.dismissIfEmpty() }
         armIdle()
-    }
-
-    // The project the thread opens in: SHOT_PROMPT_CWD first, then the rest.
-    private func makePicker(_ projects: [Project]) -> NSPopUpButton {
-        let pp = NSPopUpButton(frame: .zero, pullsDown: false)
-        pp.isBordered = false
-        pp.controlSize = .small
-        pp.font = .systemFont(ofSize: 11)
-        (pp.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtCenter
-        for entry in pickerEntries(projects: projects, defaultRoot: defaultFolder()) {
-            // Its own action, since Tab pops the menu up outside the button.
-            let item = NSMenuItem(title: entry.name, action: #selector(pickedProject(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = entry.root
-            item.toolTip = entry.toolTip
-            pp.menu?.addItem(item)
-        }
-        pp.toolTip = "Project folder to work in (Tab). Add folders in the menu bar menu."
-        menuObservers += holdOpen(while: pp.menu!)
-        return pp
     }
 
     // While a menu is open, the empty-panel timers and observers must not close the panel.
@@ -924,48 +1190,127 @@ final class Controller: NSObject, NSTextViewDelegate {
         ]
     }
 
-    // A menu takes arrow keys only while its app is active, so ShotPrompt comes
-    // forward for the menu and then gives the front back to the app you were in.
-    private func openPicker(_ pp: NSPopUpButton) {
-        returnTo = NSWorkspace.shared.frontmostApplication
-        if returnTo?.processIdentifier == ProcessInfo.processInfo.processIdentifier { returnTo = nil }
-        NSApp.activate(ignoringOtherApps: true)
-        // A menu shown while the switch is still settling closes at once.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self, self.picker === pp else { return }
-            pp.menu?.popUp(positioning: pp.selectedItem, at: .zero, in: pp)
-            // The panel takes the keyboard back once this app has stepped back;
-            // a key panel loses the keyboard while its app is still giving up the front.
-            guard let back = self.returnTo, back.activate() else { self.refocus(); return }
-            var token: NSObjectProtocol?
-            token = NotificationCenter.default.addObserver(
-                forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                if let t = token { NotificationCenter.default.removeObserver(t) }
-                self?.refocus()
-            }
-        }
-    }
-
     private func refocus() {
         panel?.makeKey()
         if let f = field { panel?.makeFirstResponder(f) }
     }
 
-    @objc private func pickedProject(_ item: NSMenuItem) {
-        pickedByHand = true
-        picker?.select(item)
-        layoutStatus()
-        if let f = field { panel?.makeFirstResponder(f) }
+    // Tab or a click on the chip opens the target popup; again closes it.
+    private func togglePopup() {
+        if popup != nil { closePopup(refocus: true) } else { openPopup() }
     }
 
+    // A click on the chip while the popup is open first takes the keys from
+    // the popup, which closes it; that same click must not open it again.
+    @objc private func chipClicked() {
+        if chipClickToggles(closedAt: popupClosedAt, now: Date()) { togglePopup() }
+    }
+
+    private func openPopup() {
+        guard let p = panel, chip != nil, let f = field, f.isEditable, let app else { return }
+        idleTimer?.invalidate()
+        let pop = TargetPopup()
+        pop.rowsFor = { [weak self] query in
+            guard let self else { return [] }
+            return popupRows(threads: self.threads, entries: self.entries, detectedRoot: self.detectedRoot,
+                             current: self.target, query: query, now: Date(), app: app)
+        }
+        pop.search.placeholderString = popupPlaceholder(app: app)
+        pop.onPick = { [weak self] choice in
+            switch choice {
+            case .target(let t): self?.pick(t)
+            case .addFolder: self?.addFolder()
+            }
+        }
+        pop.onClose = { [weak self] in self?.closePopup(refocus: true) }
+        pop.onResize = { [weak self] in self?.placePopup() }
+        let rows = pop.rowsFor("")
+        pop.show(rows, selected: popupSelection(rows, current: target))
+        // Before the popup takes the keys: the panel's resign-key observer
+        // fires at once, and dismissIfEmpty() must see the popup by then.
+        popup = pop
+        placePopup()
+        p.addChildWindow(pop.window, ordered: .above)
+        pop.window.makeKey()
+        pop.window.makeFirstResponder(pop.search)
+        popupObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: pop.window, queue: .main
+        ) { [weak self] _ in self?.popupLostKey() }
+    }
+
+    // Under the panel (or above it near the bottom of the screen), as tall as
+    // its rows. `panelFrame` is where the panel is going, when it is animating.
+    private func placePopup(panelFrame: CGRect? = nil) {
+        guard let pop = popup, let p = panel else { return }
+        let screen = p.screen ?? NSScreen.main!
+        pop.window.setFrame(popupFrame(panel: panelFrame ?? p.frame, height: popupHeight(pop.rows),
+                                       visible: screen.visibleFrame), display: true)
+    }
+
+    private func closePopup(refocus again: Bool) {
+        guard let pop = popup else { return }
+        if let o = popupObserver { NotificationCenter.default.removeObserver(o) }
+        popupObserver = nil
+        panel?.removeChildWindow(pop.window)
+        pop.window.orderOut(nil)
+        popup = nil
+        if again { refocus() }
+        if !hasText { armIdle() }
+    }
+
+    // You clicked somewhere else: the popup goes, and the panel too when it
+    // is empty and did not get the keys.
+    private func popupLostKey() {
+        popupClosedAt = Date()
+        closePopup(refocus: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let p = self.panel, self.popup == nil, !p.isKeyWindow else { return }
+            self.dismissIfEmpty()
+        }
+    }
+
+    private func pick(_ choice: SendTarget) {
+        picked = choice
+        if let s = status, s.textColor == .systemRed {
+            s.stringValue = targetHint(hasPicker: true)
+            s.textColor = .secondaryLabelColor
+            s.toolTip = nil
+        }
+        retarget()
+        closePopup(refocus: true)
+    }
+
+    // "Add project folder…" in the popup: the same folder dialog as the menu
+    // bar's. The panel stays open meanwhile; a folder you add becomes the
+    // target, and choosing none leaves the target as it was.
+    private func addFolder() {
+        closePopup(refocus: false)
+        let f = field
+        menuOpen = true
+        idleTimer?.invalidate()
+        let added = chooseProjectFolders()
+        menuOpen = false
+        // A newer capture may have replaced the panel meanwhile: leave it alone.
+        guard let f, field === f else { return }
+        projects = allProjects()
+        entries = pickerEntries(projects: projects, defaultRoot: defaultFolder())
+        if let t = addedFolderTarget(added, entries: entries) { picked = t }
+        retarget()
+        refocus()
+        if !hasText { armIdle() }
+    }
+
+    // The chip at the right edge as wide as its label, the hint at full width
+    // first; a long message takes the room and the chip shrinks to its minimum.
     private func layoutStatus() {
-        guard let pp = picker, let s = status, let font = pp.font else { return }
-        let title = (pp.titleOfSelectedItem ?? "") as NSString
-        let l = statusLayout(containerWidth: s.superview?.bounds.width ?? 0,
-                             titleWidth: title.size(withAttributes: [.font: font]).width,
-                             hintMinX: s.frame.minX)
-        pp.frame = l.pickerFrame
+        guard let b = chip, let s = status, let cell = s.cell else { return }
+        // The cell's size includes the label's inner padding; the bare text
+        // width is a few points short and would cut the hint off.
+        let l = targetLayout(containerWidth: s.superview?.bounds.width ?? 0,
+                             labelWidth: b.attributedTitle.size().width,
+                             hintMinX: s.frame.minX,
+                             hintWidth: cell.cellSize.width)
+        b.frame = l.chipFrame
         s.frame.size.width = l.hintWidth
     }
 
@@ -1012,7 +1357,8 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     private func dismissIfEmpty() {
-        if hasText || menuOpen { return }
+        // The panel resigns key when the popup takes the keys.
+        if hasText || menuOpen || popup != nil || sent { return }
         // Still dictating: look again later instead of closing.
         if dictating { return armIdle() }
         dismiss()
@@ -1045,6 +1391,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         if panelTarget != fit.panelHeight {
             panelTarget = fit.panelHeight
             let frame = grownFrame(p.frame, height: fit.panelHeight, visible: p.screen?.visibleFrame)
+            // A child window follows the panel's moves, not its resizes.
+            placePopup(panelFrame: frame)
             // The thumbnail keeps to the top edge by autoresizing.
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = p.isVisible ? 0.12 : 0
@@ -1073,13 +1421,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        switch textCommand(NSStringFromSelector(selector), hasPicker: picker != nil) {
+        switch textCommand(NSStringFromSelector(selector), hasPicker: chip != nil) {
         case .send: send()
         case .dismiss: dismiss()
-        case .openPicker:
-            // After this key event returns, so the menu's tracking loop does not run inside it.
-            let pp = picker!
-            DispatchQueue.main.async { self.openPicker(pp) }
+        case .openPicker: togglePopup()
         case .none: return false
         }
         return true
@@ -1090,43 +1435,81 @@ final class Controller: NSObject, NSTextViewDelegate {
         guard let typed = sendablePrompt(f.string) else { return }
         let prompt = promptWithContext(typed, context, captures: 1 + extraImages.count)
         let images = [url] + [context.windowShot].compactMap { $0 } + extraImages
-        let cwd = picker?.selectedItem?.representedObject as? String ?? defaultFolder()
+        let sentTo = target
+        let app = self.app ?? currentTarget()
+        let (cwd, thread) = sendArguments(sentTo, app: app, defaultRoot: defaultFolder())
         f.isEditable = false
-        picker?.isEnabled = false
+        chip?.isEnabled = false
         chipViews.forEach { $0.isEnabled = false }
-        status?.stringValue = "launching…"
-        let target = sendTarget ?? currentTarget()
-        if target.usesProject {
+        status?.stringValue = thread == nil ? "launching…" : "sending…"
+        layoutStatus()
+        if case .newThread = sentTo, app.usesProject {
             UserDefaults.standard.set(rememberFolder(cwd, in: recentFolders), forKey: recentFoldersKey)
         }
         DispatchQueue.global().async {
-            let (ok, out) = Self.deliver(target, prompt: prompt, images: images, cwd: cwd)
+            let (ok, out) = Self.deliver(app, prompt: prompt, images: images, cwd: cwd, thread: thread)
             DispatchQueue.main.async {
-                if ok {
+                let outcome = sendOutcome(ok: ok, output: out, target: sentTo, threads: self.threads)
+                switch outcome {
+                case .close, .notice: if app.usesProject { self.lastTarget = LastTarget(target: sentTo, at: Date()) }
+                case .failure: NSLog("ShotPrompt dispatch failed: %@", out)
+                }
+                // Esc during the send closed this panel, and a newer capture
+                // may be on screen: leave it alone.
+                guard self.field === f else { return }
+                switch outcome {
+                case .close:
                     // The thread or terminal is already open; vanish at once, no fade.
                     self.panel?.animationBehavior = .none
                     self.dismiss()
-                } else {
+                case .notice(let text):
+                    self.showNotice(text)
+                case .failure(let message):
                     f.isEditable = true
-                    self.picker?.isEnabled = true
+                    self.chip?.isEnabled = true
                     self.chipViews.forEach { $0.isEnabled = true }
                     self.status?.toolTip = out
-                    self.status?.stringValue = "failed: " + out
+                    self.status?.stringValue = message
                     self.status?.textColor = .systemRed
-                    NSLog("ShotPrompt dispatch failed: %@", out)
+                    self.layoutStatus()
                 }
             }
         }
     }
 
+    // "✓ Added to <thread>" across the status row for a moment, while the
+    // keyboard goes back to the app in front; then the panel closes.
+    private func showNotice(_ text: String) {
+        sent = true
+        chip?.isHidden = true
+        gear?.isHidden = true
+        if let s = status, let content = s.superview {
+            s.frame.size.width = max(content.bounds.width - s.frame.minX - 12, 0)
+            s.stringValue = text
+            s.textColor = .systemGreen
+            s.toolTip = nil
+        }
+        if let p = panel {
+            p.keyable = false
+            // No fade: the notice must not blink.
+            p.animationBehavior = .none
+            p.orderOut(nil)
+            p.orderFrontRegardless()
+        }
+        noticeTimer = Timer.scheduledTimer(withTimeInterval: addedNoticeSeconds, repeats: false) { [weak self] _ in
+            self?.dismiss()
+        }
+    }
+
     // Sends to the target, off the main thread. A terminal or chat app gets
     // copies of the images, since the window shot is deleted when the panel goes.
-    private static func deliver(_ target: Target, prompt: String, images: [URL], cwd: String)
+    private static func deliver(_ target: Target, prompt: String, images: [URL], cwd: String,
+                                thread: String?)
         -> (ok: Bool, output: String) {
         switch target {
         case .command:
             return dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
-                            environment: config.environment, home: config.home)
+                            environment: config.environment, home: config.home, thread: thread)
         case .clipboard:
             let copied = DispatchQueue.main.sync { copyToClipboard(images: images, prompt: prompt) }
             return copied ? (true, "") : (false, "cannot read the screenshot")
@@ -1162,6 +1545,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     }
 
     private func dismiss() {
+        closePopup(refocus: false)
+        noticeTimer?.invalidate()
+        noticeTimer = nil
+        sent = false
         idleTimer?.invalidate()
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         keyMonitor = nil
@@ -1178,12 +1565,12 @@ final class Controller: NSObject, NSTextViewDelegate {
         menuObservers.forEach(NotificationCenter.default.removeObserver)
         menuObservers = []
         menuOpen = false
-        returnTo = nil
         icon?.orderOut(nil)
         icon = nil
         panel?.orderOut(nil)
-        panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; picker = nil; image = nil
-        chipViews = []; chipsHeight = 0; panelTarget = 0; projects = []; pickedByHand = false
+        panel = nil; field = nil; scroll = nil; thumbnail = nil; status = nil; gear = nil; chip = nil; image = nil
+        chipViews = []; chipsHeight = 0; panelTarget = 0; projects = []
+        threads = []; entries = []; picked = nil; detectedRoot = nil; target = .newThread(root: defaultFolder()); app = nil
         Self.discard(window?.windowShot)
         contextReads += 1
         window = nil; serverFolder = nil; context = CaptureContext(); removedKinds = []; extraImages = []
@@ -1221,7 +1608,7 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         menu.addItem(sendTo)
         let add = NSMenuItem(title: "Add project folder…", action: #selector(addFolder), keyEquivalent: "")
         add.target = self
-        add.toolTip = "Folders show in the panel's picker; the ones you send to are added on their own."
+        add.toolTip = "Folders show in the panel's project popup; the ones you send to are added on their own."
         menu.addItem(add)
         if !runByLaunchAgent {
             let login = NSMenuItem(title: "Open at login", action: #selector(flipLogin), keyEquivalent: "")
@@ -1254,6 +1641,12 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         menu.addItem(pick)
         menu.addItem(toggle("Paste captures taken in T3 into its chat", pasteIntoT3Key,
                             UserDefaults.standard.bool(forKey: pasteIntoT3Key), needsAX: true))
+        menu.addItem(.separator())
+        menu.addItem(header("Start on the last thread or project used"))
+        let minutes = lastTargetMinutes(UserDefaults.standard.object(forKey: lastTargetMinutesKey))
+        for m in lastTargetChoices {
+            menu.addItem(choice(lastTargetLabel(m), minutes: m, on: m == minutes))
+        }
         if (s.needsAccessibility || UserDefaults.standard.bool(forKey: pasteIntoT3Key)) && !AXIsProcessTrusted() {
             menu.addItem(.separator())
             let ax = NSMenuItem(title: "Allow Accessibility for titles, addresses and projects…",
@@ -1292,16 +1685,7 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func addFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = true
-        panel.prompt = "Add"
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK else { return }
-        var list = recentFolders
-        for url in panel.urls.reversed() { list = rememberFolder(url.path, in: list) }
-        UserDefaults.standard.set(list, forKey: recentFoldersKey)
+        _ = chooseProjectFolders()
     }
 
     @objc private func flipLogin() {
@@ -1331,6 +1715,20 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         m.state = on ? .on : .off
         m.representedObject = [key, needsAX, needsScreen] as [Any]
         return m
+    }
+
+    private func choice(_ title: String, minutes: Int, on: Bool) -> NSMenuItem {
+        let m = NSMenuItem(title: title, action: #selector(chooseLastTarget(_:)), keyEquivalent: "")
+        m.target = self
+        m.state = on ? .on : .off
+        m.representedObject = minutes
+        return m
+    }
+
+    @objc private func chooseLastTarget(_ m: NSMenuItem) {
+        guard let minutes = m.representedObject as? Int else { return }
+        UserDefaults.standard.set(minutes, forKey: lastTargetMinutesKey)
+        NotificationCenter.default.post(name: settingsChangedNotification, object: nil)
     }
 
     @objc private func flip(_ m: NSMenuItem) {

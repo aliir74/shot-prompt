@@ -48,6 +48,10 @@ public enum Target: String, CaseIterable, Equatable {
 
     // Whether the target works in a project folder (and the panel shows the picker).
     public var usesProject: Bool { !isChatApp && self != .clipboard }
+
+    // Whether it can add to an open T3 thread: only the custom command takes
+    // `--thread`, so only it gets the picker's open threads.
+    public var addsToThreads: Bool { self == .command }
 }
 
 public let targetKey = "target"

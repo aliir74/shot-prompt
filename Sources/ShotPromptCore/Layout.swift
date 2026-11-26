@@ -58,18 +58,60 @@ public func grownFrame(_ frame: CGRect, height: CGFloat, visible: CGRect?) -> CG
     return f
 }
 
-public struct StatusLayout: Equatable {
-    public let pickerFrame: CGRect
+public enum PopupMetrics {
+    public static let rowHeight: CGFloat = 24
+    public static let headerHeight: CGFloat = 22
+    public static let searchHeight: CGFloat = 34
+    // Fits 2 headers and 15 items, the unfiltered list, without scrolling.
+    public static let maxListHeight: CGFloat = 420
+    public static let padding: CGFloat = 8
+    // Space between the panel and the popup.
+    public static let gap: CGFloat = 4
+}
+
+// The search field, the rows (scrolling past maxListHeight) and padding.
+public func popupHeight(_ rows: [PopupRow]) -> CGFloat {
+    let list = rows.reduce(CGFloat(0)) { sum, row in
+        if case .header = row { return sum + PopupMetrics.headerHeight }
+        return sum + PopupMetrics.rowHeight
+    }
+    return PopupMetrics.searchHeight + min(list, PopupMetrics.maxListHeight) + PopupMetrics.padding
+}
+
+// The popup hangs under the panel, as wide as it; above it when there is no
+// room below; always kept on the screen.
+public func popupFrame(panel: CGRect, height: CGFloat, visible: CGRect) -> CGRect {
+    var y = panel.minY - PopupMetrics.gap - height
+    if y < visible.minY + 8 { y = panel.maxY + PopupMetrics.gap }
+    let size = CGSize(width: panel.width, height: height)
+    return CGRect(origin: clamp(origin: CGPoint(x: panel.minX, y: y), size: size, in: visible), size: size)
+}
+
+public enum TargetChipMetrics {
+    public static let height: CGFloat = 20
+    // Room around the label inside the chip.
+    public static let padding: CGFloat = 16
+    public static let minWidth: CGFloat = 60
+    // Space between the hint and the chip.
+    public static let gap: CGFloat = 8
+}
+
+public struct TargetLayout: Equatable {
+    public let chipFrame: CGRect
     public let hintWidth: CGFloat
 }
 
-// The picker sits at the right edge, as wide as the chosen title (at most 200);
-// the hint label takes the rest.
-public func statusLayout(containerWidth: CGFloat, titleWidth: CGFloat, hintMinX: CGFloat) -> StatusLayout {
+// The target chip sits at the right edge of the status row, as wide as its
+// label; the hint keeps its full width first, so a long message shrinks the
+// chip, down to minWidth. The hint gets what is left, never less than 0.
+public func targetLayout(containerWidth: CGFloat, labelWidth: CGFloat, hintMinX: CGFloat,
+                         hintWidth: CGFloat) -> TargetLayout {
     let right = containerWidth - 12
-    let pw = min(ceil(titleWidth) + 26, 200)
-    return StatusLayout(pickerFrame: CGRect(x: right - pw + 6, y: 8, width: pw, height: 22),
-                        hintWidth: max(right - pw - hintMinX - 4, 0))
+    let want = ceil(labelWidth) + TargetChipMetrics.padding
+    let room = right - hintMinX - ceil(hintWidth) - TargetChipMetrics.gap
+    let w = min(want, max(room, TargetChipMetrics.minWidth))
+    return TargetLayout(chipFrame: CGRect(x: right - w, y: 9, width: w, height: TargetChipMetrics.height),
+                        hintWidth: max(right - w - hintMinX - TargetChipMetrics.gap, 0))
 }
 
 public struct Fade: Equatable {

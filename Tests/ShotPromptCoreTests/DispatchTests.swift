@@ -34,6 +34,14 @@ final class DispatchTests: XCTestCase {
             """)
     }
 
+    func testThreadGoesFirst() throws {
+        let bin = try script("for a in \"$@\"; do echo \"$a\"; done\n")
+        let r = dispatch(executable: bin, prompt: "p", images: [URL(fileURLWithPath: "/i.png")],
+                         cwd: "/c", environment: [:], home: home, thread: "t-1")
+        XCTAssertTrue(r.ok)
+        XCTAssertEqual(r.output, "--thread\nt-1\n--cwd\n/c\n--image\n/i.png\np")
+    }
+
     func testFailureMergesStderr() throws {
         let bin = try script("echo out; echo 'boom' >&2; exit 2\n")
         let r = dispatch(executable: bin, prompt: "p", images: [URL(fileURLWithPath: "/i.png")],

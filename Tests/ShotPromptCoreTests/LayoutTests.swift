@@ -54,15 +54,6 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(grownFrame(low, height: 174, visible: nil), CGRect(x: 100, y: -70, width: 420, height: 174))
     }
 
-    func testStatusLayout() {
-        XCTAssertEqual(statusLayout(containerWidth: 420, titleWidth: 40.2, hintMinX: 84),
-                       StatusLayout(pickerFrame: CGRect(x: 347, y: 8, width: 67, height: 22), hintWidth: 253))
-        // A long title is capped at 200.
-        XCTAssertEqual(statusLayout(containerWidth: 420, titleWidth: 500, hintMinX: 84).pickerFrame.width, 200)
-        // A tiny container leaves the hint no room, not negative room.
-        XCTAssertEqual(statusLayout(containerWidth: 100, titleWidth: 100, hintMinX: 84).hintWidth, 0)
-    }
-
     func testFade() {
         let view = CGRect(x: 0, y: 0, width: 300, height: 108)
         XCTAssertEqual(fade(visible: view, documentHeight: 50, scrolls: false),
@@ -74,5 +65,48 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(fade(visible: view.offsetBy(dx: 0, dy: 192), documentHeight: 300, scrolls: true),
                        Fade(top: true, bottom: false, edge: 24.0 / 108), "at the bottom")
         XCTAssertEqual(fade(visible: .zero, documentHeight: 0, scrolls: false).edge, 0.5, "zero height")
+    }
+
+    func testPopupHeight() {
+        let item = PopupRow.item(PopupItem(target: .thread(id: "1"), title: "t", detail: "", toolTip: ""))
+        // 34 search + (2 headers × 22 + 3 rows × 24) + 8 padding. Plain literals: CI's
+        // compiler times out type-checking the sum next to the enum array.
+        let rows: [PopupRow] = [.header("a"), item, item, .header("b"), item]
+        XCTAssertEqual(popupHeight(rows), 158)
+        XCTAssertEqual(popupHeight([]), 42)
+        XCTAssertEqual(popupHeight(Array(repeating: item, count: 20)), 462, "34 + 420 cap + 8: the list caps and scrolls")
+        XCTAssertLessThanOrEqual(2 * PopupMetrics.headerHeight + 15 * PopupMetrics.rowHeight, PopupMetrics.maxListHeight)
+        XCTAssertEqual(PopupMetrics.padding, 8)
+        XCTAssertEqual(PopupMetrics.gap, 4)
+    }
+
+    func testPopupFrame() {
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        XCTAssertEqual(popupFrame(panel: CGRect(x: 100, y: 500, width: 420, height: 84), height: 200, visible: visible),
+                       CGRect(x: 100, y: 296, width: 420, height: 200), "under the panel")
+        XCTAssertEqual(popupFrame(panel: CGRect(x: 100, y: 150, width: 420, height: 84), height: 200, visible: visible),
+                       CGRect(x: 100, y: 238, width: 420, height: 200), "above it near the bottom of the screen")
+        // Room neither under nor above: kept on the screen.
+        XCTAssertEqual(popupFrame(panel: CGRect(x: 1300, y: 100, width: 420, height: 84), height: 200,
+                                  visible: CGRect(x: 0, y: 0, width: 1440, height: 300)),
+                       CGRect(x: 1012, y: 92, width: 420, height: 200))
+    }
+
+    func testTargetLayout() {
+        XCTAssertEqual(targetLayout(containerWidth: 420, labelWidth: 60.2, hintMinX: 104, hintWidth: 110),
+                       TargetLayout(chipFrame: CGRect(x: 331, y: 9, width: 77, height: 20), hintWidth: 219))
+        let wide = targetLayout(containerWidth: 420, labelWidth: 500, hintMinX: 104, hintWidth: 110)
+        XCTAssertEqual(wide.chipFrame.width, 186)
+        XCTAssertEqual(wide.hintWidth, 110, "the hint keeps its full width")
+        let error = targetLayout(containerWidth: 420, labelWidth: 500, hintMinX: 104, hintWidth: 600)
+        XCTAssertEqual(error.chipFrame.width, 60, "a long error shrinks the chip to its minimum")
+        XCTAssertEqual(error.hintWidth, 236)
+        let tiny = targetLayout(containerWidth: 100, labelWidth: 60.2, hintMinX: 104, hintWidth: 110)
+        XCTAssertEqual(tiny.chipFrame.width, 60)
+        XCTAssertEqual(tiny.hintWidth, 0, "never negative")
+        XCTAssertEqual(TargetChipMetrics.height, 20)
+        XCTAssertEqual(TargetChipMetrics.padding, 16)
+        XCTAssertEqual(TargetChipMetrics.minWidth, 60)
+        XCTAssertEqual(TargetChipMetrics.gap, 8)
     }
 }

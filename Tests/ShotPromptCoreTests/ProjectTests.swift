@@ -129,11 +129,86 @@ final class PickerTests: XCTestCase {
         let e = pickerEntries(projects: [Project(title: "x", root: root)], defaultRoot: root)
         XCTAssertEqual(e.first?.toolTip, "~/code/x")
     }
+}
 
-    func testStatusHint() {
-        XCTAssertEqual(statusHint(hasProjects: true), "↩ new thread · ⇥ project · esc")
-        XCTAssertEqual(statusHint(hasProjects: false), "↩ new thread · esc dismiss")
-        XCTAssertEqual(statusHint(hasProjects: true, target: .codex), "↩ Codex · ⇥ project · esc")
-        XCTAssertEqual(statusHint(hasProjects: false, target: .claudeApp), "↩ Claude app · esc dismiss")
+final class ThreadTests: XCTestCase {
+    var dir: URL!
+
+    override func setUpWithError() throws {
+        dir = try makeTempDir(self)
+    }
+
+    func makeDB(_ statements: [String]) throws -> String {
+        let path = dir.appendingPathComponent("state.sqlite").path
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        for sql in statements {
+            var err: UnsafeMutablePointer<CChar>?
+            if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
+                XCTFail("\(sql): \(String(cString: err!))")
+            }
+        }
+        return path
+    }
+
+    let schema = [
+        """
+        CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, workspace_root TEXT,
+            pinned_at TEXT, archived_at TEXT, deleted_at TEXT)
+        """,
+        """
+        CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, project_id TEXT, title TEXT,
+            updated_at TEXT, archived_at TEXT, deleted_at TEXT, payload_json TEXT)
+        """,
+        "INSERT INTO projection_projects VALUES ('p', 'app', '/w/app', NULL, NULL, NULL)",
+        "INSERT INTO projection_projects VALUES ('gone', 'Gone', '/w/gone', NULL, NULL, '2026-01-01')",
+    ]
+
+    func thread(_ id: String, _ title: String?, updated: String, project: String = "p",
+                payload: String = "{}", archived: Bool = false, deleted: Bool = false) -> String {
+        let t = title.map { "'\($0)'" } ?? "NULL"
+        return "INSERT INTO orchestration_v2_projection_threads VALUES ('\(id)', '\(project)', \(t), "
+            + "'\(updated)', \(archived ? "'x'" : "NULL"), \(deleted ? "'x'" : "NULL"), '\(payload)')"
+    }
+
+    func testOpenThreadsNewestFirst() throws {
+        let path = try makeDB(schema + [
+            thread("old", "Old one", updated: "2026-01-01"),
+            thread("new", "New one", updated: "2026-03-01"),
+            thread("fork", "A fork", updated: "2026-02-01",
+                   payload: #"{"lineage":{"relationshipToParent":"fork"},"settledAt":null}"#),
+            // Left out.
+            thread("settled", "Settled", updated: "2027-01-01", payload: #"{"settledAt":"2026-01-02"}"#),
+            thread("sub", "Subagent", updated: "2027-01-01",
+                   payload: #"{"lineage":{"relationshipToParent":"subagent"}}"#),
+            thread("side", "Side chat", updated: "2027-01-01", payload: #"{"lineage":{"sideChat":true}}"#),
+            thread("arch", "Archived", updated: "2027-01-01", archived: true),
+            thread("del", "Deleted", updated: "2027-01-01", deleted: true),
+            thread("orphan", "Deleted project", updated: "2027-01-01", project: "gone"),
+            thread("bad", "Bad payload", updated: "2027-01-01", payload: "not json"),
+            thread("untitled", nil, updated: "2027-01-01"),
+        ])
+        let threads = loadThreads(databasePath: path)
+        XCTAssertEqual(threads.map(\.id), ["new", "fork", "old"])
+        XCTAssertEqual(threads.first, OpenThread(id: "new", title: "New one", project: "app"))
+        XCTAssertEqual(loadThreads(databasePath: path, limit: 1).map(\.id), ["new"])
+    }
+
+    func testActivityTime() throws {
+        let path = try makeDB(schema + [
+            thread("timed", "Timed", updated: "2026-03-01T10:00:00.500Z"),
+            thread("plain", "Plain", updated: "2026-01-01"),
+        ])
+        let threads = loadThreads(databasePath: path)
+        XCTAssertEqual(threads.map(\.id), ["timed", "plain"])
+        XCTAssertNotNil(threads[0].updatedAt)
+        XCTAssertEqual(threads[0].updatedAt, parseT3Date("2026-03-01T10:00:00.500Z"))
+        XCTAssertNil(threads[1].updatedAt)
+    }
+
+    func testMissingDatabaseOrTables() throws {
+        XCTAssertEqual(loadThreads(databasePath: dir.appendingPathComponent("none.sqlite").path), [])
+        XCTAssertEqual(loadThreads(databasePath: try makeDB(["CREATE TABLE other (x)"])), [])
     }
 }
