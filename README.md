@@ -98,17 +98,27 @@ ShotPrompt only reads T3's database (`$SHOT_PROMPT_T3_DB`, default `~/.t3/userda
 
 ## Install
 
+**Download:** get `ShotPrompt-<version>.dmg` from the [latest release](https://github.com/aliir74/shot-prompt/releases/latest), open it, and drag ShotPrompt to Applications. Open it once: it starts at login from then on (turn that off in its menu), and the welcome note says where your screenshots will go. Until releases are notarized, macOS blocks the first open because Apple has not checked the app: click Done, then **System Settings > Privacy & Security > Open Anyway**. If macOS says the app is damaged instead, run `xattr -dr com.apple.quarantine /Applications/ShotPrompt.app` and open it again.
+
+**Homebrew** (once the tap is published):
+
+```sh
+brew install --cask aliir74/tap/shotprompt
+```
+
+**From source** (macOS 13+, Swift 5.9+), as a LaunchAgent that restarts if it dies:
+
 ```sh
 SHOT_PROMPT_CWD=~/my/project SHOT_PROMPT_DISPATCH=~/bin/t3-dispatch ./build.sh
 ```
 
-This builds `~/Applications/ShotPrompt.app` and loads the `io.github.aliir74.shot-prompt` LaunchAgent (starts at login, restarts if it dies). A rebuild keeps the installed agent's `SHOT_PROMPT_CWD` and `SHOT_PROMPT_DISPATCH` unless you set them again. First-install defaults: `SHOT_PROMPT_CWD=$HOME`, `SHOT_PROMPT_DISPATCH=~/.local/bin/t3-dispatch`, `SHOT_PROMPT_CAPTURE_DIR=~/Pictures` (Shottr's folder; macOS's own is always watched too). Log: `/tmp/shot-prompt.log`.
+This builds `~/Applications/ShotPrompt.app` and loads the `io.github.aliir74.shot-prompt` LaunchAgent (starts at login, restarts if it dies). A rebuild keeps the installed agent's `SHOT_PROMPT_CWD` and `SHOT_PROMPT_DISPATCH` unless you set them again. First-install defaults: `SHOT_PROMPT_CWD=$HOME`, no `SHOT_PROMPT_DISPATCH` (Enter sends to the target picked in the menu), `SHOT_PROMPT_CAPTURE_DIR=~/Pictures` (Shottr's folder; macOS's own is always watched too). Log: `/tmp/shot-prompt.log`.
 
 The app is ad-hoc signed with a designated requirement of just its bundle ID, so macOS keeps folder-access grants (for example Downloads, when the dispatch command lives there) across rebuilds. The tradeoff: any ad-hoc binary with the same bundle ID would match those grants too.
 
 Uninstall: `launchctl bootout gui/$(id -u)/io.github.aliir74.shot-prompt`, then delete the plist in `~/Library/LaunchAgents` and the app.
 
-macOS 13+, Swift 5.9+ (`build.sh` runs `swift build`).
+`scripts/package.sh <version>` builds the universal app and `.dmg` into `dist/`, signed and notarized when `DEVELOPER_ID` and the `NOTARY_*` variables are set. Pushing a `v*` tag runs it in CI (`.github/workflows/release.yml`) and attaches the `.dmg` to the release. `Casks/shotprompt.rb` is the Homebrew cask template; each release attaches it filled in (`shotprompt.rb`) to copy to the tap.
 
 ## Tests
 

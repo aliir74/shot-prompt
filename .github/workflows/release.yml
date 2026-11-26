@@ -1,0 +1,57 @@
+name: Release
+
+# Push a tag like v0.4.0: builds the universal app and .dmg and attaches
+# them to the GitHub release. Signs and notarizes when these secrets exist:
+#   DEVELOPER_ID_P12 (base64 .p12), DEVELOPER_ID_P12_PASSWORD, DEVELOPER_ID
+#   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    # Job-level, so a step's `if` can read it (a step's own env is set too late).
+    env:
+      HAS_DEVELOPER_ID: ${{ secrets.DEVELOPER_ID_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests and 100% line coverage of ShotPromptCore
+        run: scripts/coverage.sh
+      - name: Import the Developer ID certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        if: env.HAS_DEVELOPER_ID == 'true'
+        run: |
+          KC="$RUNNER_TEMP/build.keychain"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings "$KC"
+          security unlock-keychain -p ci "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+          security list-keychains -d user -s "$KC" login.keychain
+      - name: Build the app and .dmg
+        env:
+          DEVELOPER_ID: ${{ secrets.DEVELOPER_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: scripts/package.sh "${GITHUB_REF_NAME#v}"
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DMG="dist/ShotPrompt-${GITHUB_REF_NAME#v}.dmg"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          # The cask with this release's version and checksum, ready to copy to the tap.
+          SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
+          sed -e "s/^  version \".*\"/  version \"${GITHUB_REF_NAME#v}\"/" \
+              -e "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" Casks/shotprompt.rb > dist/shotprompt.rb
+          grep -q "$SHA" dist/shotprompt.rb
+          gh release upload "$GITHUB_REF_NAME" "$DMG" dist/shotprompt.rb --clobber
