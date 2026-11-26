@@ -176,10 +176,14 @@ public func mergeProjects(t3: [Project], recent: [String],
 }
 
 // The folder the panel starts on: `$SHOT_PROMPT_CWD`, else the last folder
-// you sent to that is still there, else the home folder.
+// you sent to that is still there, else the home folder. With "Start on the
+// last thread or project used" Off (`lastTargetMinutes` 0) the last folder is
+// skipped too.
 public func startFolder(environment: String?, recent: [String], home: URL,
+                        lastTargetMinutes: Int = lastTargetDefaultMinutes,
                         exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String {
-    environment ?? recent.first(where: exists) ?? home.path
+    let recent = lastTargetMinutes > 0 ? recent : []
+    return environment ?? recent.first(where: exists) ?? home.path
 }
 
 // Where an app bundle can stay: login items and permissions bind to its path,

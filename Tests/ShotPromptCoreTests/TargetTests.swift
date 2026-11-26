@@ -140,6 +140,35 @@ final class TargetTests: XCTestCase {
         XCTAssertEqual(startFolder(environment: nil, recent: [], home: home), "/Users/x")
     }
 
+    func testStartFolderOff() {
+        let home = URL(fileURLWithPath: "/Users/x")
+        let yes: (String) -> Bool = { _ in true }
+        XCTAssertEqual(startFolder(environment: nil, recent: ["/r"], home: home, lastTargetMinutes: 0, exists: yes),
+                       "/Users/x", "Off: not the last folder sent to")
+        XCTAssertEqual(startFolder(environment: "/env", recent: ["/r"], home: home, lastTargetMinutes: 0, exists: yes),
+                       "/env")
+        XCTAssertEqual(startFolder(environment: nil, recent: ["/r"], home: home, lastTargetMinutes: 5, exists: yes),
+                       "/r", "any other setting keeps it")
+    }
+
+    // Off, through to the target the panel starts on: the detected project,
+    // else $SHOT_PROMPT_CWD, else home, never the last folder sent to.
+    func testStartTargetOff() {
+        let home = URL(fileURLWithPath: "/Users/x")
+        let projects = [Project(title: "a", root: "/w/a"), Project(title: "r", root: "/r")]
+        func start(env: String?, detected: String?, minutes: Int) -> SendTarget {
+            let root = startFolder(environment: env, recent: ["/r"], home: home, lastTargetMinutes: minutes,
+                                   exists: { _ in true })
+            let entries = pickerEntries(projects: projects, defaultRoot: root)
+            return resolveTarget(picked: nil, remembered: nil, detectedRoot: detected, entries: entries,
+                                 defaultRoot: root)
+        }
+        XCTAssertEqual(start(env: nil, detected: nil, minutes: 0), .newThread(root: "/Users/x"))
+        XCTAssertEqual(start(env: "/env", detected: nil, minutes: 0), .newThread(root: "/env"))
+        XCTAssertEqual(start(env: "/env", detected: "/w/a", minutes: 0), .newThread(root: "/w/a"))
+        XCTAssertEqual(start(env: nil, detected: nil, minutes: 15), .newThread(root: "/r"), "unchanged when on")
+    }
+
     func testIsInApplicationsFolder() {
         let home = URL(fileURLWithPath: "/Users/x")
         XCTAssertTrue(isInApplicationsFolder("/Applications/ShotPrompt.app", home: home))
