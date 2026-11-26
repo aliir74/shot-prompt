@@ -182,9 +182,9 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 
 ### Task 2.4: Remember the last target (decisions 7, 8, 9)
 **Files:** Modify: `Sources/ShotPrompt/main.swift`
-- [ ] `Controller`: add `private var lastTarget: LastTarget?` (kept across `dismiss()`, in memory only). In `send()`'s success path, before closing, set `lastTarget = LastTarget(target: <the target that was sent>, at: Date())`.
-- [ ] `retarget()` passes `remembered: rememberedTarget(lastTarget, minutes: lastTargetMinutes(UserDefaults.standard.object(forKey: lastTargetMinutesKey)), now: Date(), threads: threads, entries: entries)`. `detectedRoot` still goes to `popupRows`, so the detected project leads the popup's project list while the chip shows the remembered target.
-- [ ] `SettingsMenu.menuNeedsUpdate`: after the "Paste captures taken in T3" item add `menu.addItem(.separator())`, then `header("Start on the last thread or project used")` and one item per `lastTargetChoices` through a new helper `choice(_ title: String, minutes: Int, on: Bool) -> NSMenuItem` (title from `lastTargetLabel`, `state` on for the current `lastTargetMinutes(...)`, `representedObject = minutes`, action `#selector(chooseLastTarget(_:))`). `chooseLastTarget` writes the Int to `lastTargetMinutesKey` and posts `settingsChangedNotification` (the existing observer runs `refreshContext()`, so an open panel follows the change). The Bool-only `toggle`/`flip` helpers stay as they are.
+- [x] `Controller`: add `private var lastTarget: LastTarget?` (kept across `dismiss()`, in memory only). In `send()`'s success path, before closing, set `lastTarget = LastTarget(target: <the target that was sent>, at: Date())`.
+- [x] `retarget()` passes `remembered: rememberedTarget(lastTarget, minutes: lastTargetMinutes(UserDefaults.standard.object(forKey: lastTargetMinutesKey)), now: Date(), threads: threads, entries: entries)`. `detectedRoot` still goes to `popupRows`, so the detected project leads the popup's project list while the chip shows the remembered target.
+- [x] `SettingsMenu.menuNeedsUpdate`: after the "Paste captures taken in T3" item add `menu.addItem(.separator())`, then `header("Start on the last thread or project used")` and one item per `lastTargetChoices` through a new helper `choice(_ title: String, minutes: Int, on: Bool) -> NSMenuItem` (title from `lastTargetLabel`, `state` on for the current `lastTargetMinutes(...)`, `representedObject = minutes`, action `#selector(chooseLastTarget(_:))`). `chooseLastTarget` writes the Int to `lastTargetMinutesKey` and posts `settingsChangedNotification` (the existing observer runs `refreshContext()`, so an open panel follows the change). The Bool-only `toggle`/`flip` helpers stay as they are.
 - [ ] Verify: `swift build -c release --product ShotPrompt` → `Build complete!`. Live (fixture, `SHOT_PROMPT_DISPATCH=/usr/bin/true` so sends succeed):
   1. Pick a thread, send. Drop a new capture (TextEdit's `draft.txt` still in front): the panel opens with the blue chip on that thread, not on `+ blog`, and the popup's project list still starts with `blog`.
   2. Same with a project picked through search: the next panel opens on `+ <that project>`.
@@ -192,7 +192,7 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
   4. Gear menu shows Off, 5 min, 15 min, 30 min, 60 min with 15 min checked; choosing Off with the panel open turns the chip grey at once, and `defaults read ShotPrompt lastTargetMinutes` prints `0` (an unbundled debug binary stores its settings under its process name). Clean up after the checks with `defaults delete ShotPrompt lastTargetMinutes`.
   5. Relaunch with `-lastTargetMinutes 0`: after a send to a thread, the next panel starts on `+ blog`.
   The 15-minute expiry itself is not waited out live; `rememberedTarget`'s tests in Task 1.4 cover it.
-- [ ] Commit: `Start on the last target used, for a time set in the gear menu`
+- [x] Commit: `Start on the last target used, for a time set in the gear menu`
 
 ### Task 2.5: "✓ Added to" confirmation (decision 12)
 **Files:** Modify: `Sources/ShotPrompt/main.swift`

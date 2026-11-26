@@ -347,6 +347,8 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var target: SendTarget = .newThread(root: config.threadCwd)
     private var picked: SendTarget?
     private var detectedRoot: String?
+    // Where the last send went. It outlives the panel, in memory only.
+    private var lastTarget: LastTarget?
     // The search popup Tab or a chip click opens, and when it last lost the keys.
     private var popup: TargetPopup?
     private var popupObserver: NSObjectProtocol?
@@ -623,7 +625,9 @@ final class Controller: NSObject, NSTextViewDelegate {
     // thread, grey for a new thread in a project. Also runs before the panel
     // exists (from readContext), so the chip may be missing.
     private func retarget() {
-        target = resolveTarget(picked: picked, remembered: nil, detectedRoot: detectedRoot,
+        let minutes = lastTargetMinutes(UserDefaults.standard.object(forKey: lastTargetMinutesKey))
+        let remembered = rememberedTarget(lastTarget, minutes: minutes, now: Date(), threads: threads, entries: entries)
+        target = resolveTarget(picked: picked, remembered: remembered, detectedRoot: detectedRoot,
                                entries: entries, defaultRoot: config.threadCwd)
         guard let b = chip else { return }
         let c = targetChip(target, threads: threads, entries: entries)
@@ -1288,8 +1292,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         guard let typed = sendablePrompt(f.string) else { return }
         let prompt = promptWithContext(typed, context, captures: 1 + extraImages.count)
         let images = [url] + [context.windowShot].compactMap { $0 } + extraImages
+        let sent = target
         let cwd: String, thread: String?
-        switch target {
+        switch sent {
         case .newThread(let root): cwd = root; thread = nil
         case .thread(let id): cwd = config.threadCwd; thread = id
         }
@@ -1303,6 +1308,7 @@ final class Controller: NSObject, NSTextViewDelegate {
                                      environment: config.environment, home: config.home, thread: thread)
             DispatchQueue.main.async {
                 if ok {
+                    self.lastTarget = LastTarget(target: sent, at: Date())
                     // The thread is already open in T3; vanish at once, no fade.
                     self.panel?.animationBehavior = .none
                     self.dismiss()
@@ -1399,6 +1405,12 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         menu.addItem(pick)
         menu.addItem(toggle("Paste captures taken in T3 into its chat", pasteIntoT3Key,
                             UserDefaults.standard.bool(forKey: pasteIntoT3Key), needsAX: true))
+        menu.addItem(.separator())
+        menu.addItem(header("Start on the last thread or project used"))
+        let minutes = lastTargetMinutes(UserDefaults.standard.object(forKey: lastTargetMinutesKey))
+        for m in lastTargetChoices {
+            menu.addItem(choice(lastTargetLabel(m), minutes: m, on: m == minutes))
+        }
         if (s.needsAccessibility || UserDefaults.standard.bool(forKey: pasteIntoT3Key)) && !AXIsProcessTrusted() {
             menu.addItem(.separator())
             let ax = NSMenuItem(title: "Allow Accessibility for titles, addresses and projects…",
@@ -1432,6 +1444,20 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         m.state = on ? .on : .off
         m.representedObject = [key, needsAX, needsScreen] as [Any]
         return m
+    }
+
+    private func choice(_ title: String, minutes: Int, on: Bool) -> NSMenuItem {
+        let m = NSMenuItem(title: title, action: #selector(chooseLastTarget(_:)), keyEquivalent: "")
+        m.target = self
+        m.state = on ? .on : .off
+        m.representedObject = minutes
+        return m
+    }
+
+    @objc private func chooseLastTarget(_ m: NSMenuItem) {
+        guard let minutes = m.representedObject as? Int else { return }
+        UserDefaults.standard.set(minutes, forKey: lastTargetMinutesKey)
+        NotificationCenter.default.post(name: settingsChangedNotification, object: nil)
     }
 
     @objc private func flip(_ m: NSMenuItem) {
