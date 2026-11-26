@@ -1,3 +1,4 @@
+import ImageIO
 import XCTest
 @testable import ShotPromptCore
 
@@ -6,8 +7,9 @@ final class TargetTests: XCTestCase {
         XCTAssertEqual(Target.allCases.map(\.title), ["Claude Code", "Codex", "Cursor Agent", "Claude app",
                                                       "ChatGPT app", "Custom command (T3 Code)", "Clipboard"])
         XCTAssertEqual(Target.allCases.map(\.executable), ["claude", "codex", "cursor-agent", nil, nil, nil, nil])
-        XCTAssertEqual(Target.allCases.map(\.bundleID),
-                       [nil, nil, nil, "com.anthropic.claudefordesktop", "com.openai.chat", nil, nil])
+        XCTAssertEqual(Target.allCases.map(\.bundleIDs),
+                       [[], [], [], ["com.anthropic.claudefordesktop"], ["com.openai.codex", "com.openai.chat"], [], []])
+        XCTAssertEqual(Target.allCases.filter(\.isChatApp), [.claudeApp, .chatGPT])
         XCTAssertEqual(Target.allCases.filter(\.usesProject), [.claudeCode, .codex, .cursorAgent, .command], "not chat apps or the clipboard")
     }
 
@@ -84,10 +86,7 @@ final class TargetTests: XCTestCase {
         let dir = try makeTempDir(self)
         let src = dir.appendingPathComponent("Screenshot 1.02\u{202F}PM.PNG")
         FileManager.default.createFile(atPath: src.path, contents: Data([1, 2]))
-        let bare = dir.appendingPathComponent("noext")
-        FileManager.default.createFile(atPath: bare.path, contents: Data([3]))
-        XCTAssertEqual(try stageImages([bare], in: dir.appendingPathComponent("three")).map(\.lastPathComponent),
-                       ["shot-1.png"])
+
         let root = dir.appendingPathComponent("sent")
         let copies = try stageImages([src, src], in: root.appendingPathComponent("one"))
         XCTAssertEqual(copies.map(\.lastPathComponent), ["shot-1.png", "shot-2.png"])
@@ -95,6 +94,21 @@ final class TargetTests: XCTestCase {
         XCTAssertThrowsError(try stageImages([dir.appendingPathComponent("missing.png")],
                                              in: root.appendingPathComponent("two")))
         XCTAssertThrowsError(try stageImages([src], in: src.appendingPathComponent("under-a-file")))
+
+        let heic = dir.appendingPathComponent("Screenshot.heic")
+        let image = CGImage(width: 2, height: 2, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 8,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                            provider: CGDataProvider(data: Data(count: 16) as CFData)!, decode: nil,
+                            shouldInterpolate: false, intent: .defaultIntent)!
+        let dest = CGImageDestinationCreateWithURL(heic as CFURL, "public.heic" as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+        let converted = try stageImages([heic], in: root.appendingPathComponent("four"))
+        XCTAssertEqual(converted.map(\.lastPathComponent), ["shot-1.png"], "HEIC becomes PNG")
+        XCTAssertNotNil(pngData(of: converted[0]))
+        XCTAssertThrowsError(try stageImages([dir.appendingPathComponent("missing.heic")],
+                                             in: root.appendingPathComponent("five")), "unreadable HEIC")
 
         pruneStaged(in: root, now: Date(), maxAge: 3600)
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("one").path), "new: kept")
@@ -119,7 +133,11 @@ final class TargetTests: XCTestCase {
     func testStartFolder() {
         let home = URL(fileURLWithPath: "/Users/x")
         XCTAssertEqual(startFolder(environment: "/env", recent: ["/r"], home: home), "/env")
-        XCTAssertEqual(startFolder(environment: nil, recent: ["/r"], home: home), "/r")
+        XCTAssertEqual(startFolder(environment: nil, recent: ["/r"], home: home, exists: { _ in true }), "/r")
+        XCTAssertEqual(startFolder(environment: nil, recent: ["/gone", "/r"], home: home, exists: { $0 == "/r" }), "/r",
+                       "a deleted folder is skipped")
+        XCTAssertEqual(startFolder(environment: nil, recent: ["/nonexistent-\(UUID())"], home: home), "/Users/x",
+                       "checks the disk by default")
         XCTAssertEqual(startFolder(environment: nil, recent: [], home: home), "/Users/x")
     }
 

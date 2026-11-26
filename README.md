@@ -16,7 +16,7 @@ Pick where Enter sends in the menu bar menu (the viewfinder icon), under **Send 
 | Cursor Agent | Same, with `cursor-agent` and the screenshot paths. |
 | Claude app | The Claude desktop app comes forward, opens a new chat, and gets the screenshot and prompt pasted in. You press Enter there. |
 | ChatGPT app | Same, in the ChatGPT desktop app. |
-| Clipboard | The screenshot and prompt go on the clipboard as one item: a chat box pastes the image, a text field the prompt. The default when none of the others is installed. |
+| Clipboard | The screenshots and prompt go on the clipboard: the first screenshot and the prompt as one item (a chat box pastes the image, a text field the prompt), then one item per other screenshot. The default when none of the others is installed. |
 | Custom command (T3 Code) | Runs `$SHOT_PROMPT_DISPATCH` (see [Dispatch command](#dispatch-command)); with a T3 dispatcher, a new [T3 Code](https://t3.codes) thread opens. An install with `SHOT_PROMPT_DISPATCH` set starts here. |
 
 - Terminal targets open a `.command` file, so they use the app your Mac opens those with (Terminal, or iTerm if you set it). The CLI is looked up in `~/.local/bin`, Homebrew and the usual npm/bun folders; if it is elsewhere, your shell's PATH finds it.

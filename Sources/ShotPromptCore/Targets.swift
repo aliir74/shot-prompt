@@ -34,17 +34,20 @@ public enum Target: String, CaseIterable, Equatable {
         }
     }
 
-    // The app a paste target pastes into, or nil for the others.
-    public var bundleID: String? {
+    // The app a paste target pastes into, newest bundle ID first; empty for
+    // the others. ChatGPT.app changed its ID from com.openai.chat.
+    public var bundleIDs: [String] {
         switch self {
-        case .claudeApp: return "com.anthropic.claudefordesktop"
-        case .chatGPT: return "com.openai.chat"
-        case .claudeCode, .codex, .cursorAgent, .command, .clipboard: return nil
+        case .claudeApp: return ["com.anthropic.claudefordesktop"]
+        case .chatGPT: return ["com.openai.codex", "com.openai.chat"]
+        case .claudeCode, .codex, .cursorAgent, .command, .clipboard: return []
         }
     }
 
+    public var isChatApp: Bool { !bundleIDs.isEmpty }
+
     // Whether the target works in a project folder (and the panel shows the picker).
-    public var usesProject: Bool { bundleID == nil && self != .clipboard }
+    public var usesProject: Bool { !isChatApp && self != .clipboard }
 }
 
 public let targetKey = "target"
@@ -123,13 +126,20 @@ public func terminalScript(_ target: Target, executable: String?, prompt: String
 // Copies the images to a folder of their own, so a CLI that reads them later
 // still finds them after the panel deletes its window shot. The copies get
 // plain names (shot-1.png): macOS's own hold spaces and a narrow no-break
-// space before AM/PM, which an agent retyping the path gets wrong.
+// space before AM/PM, which an agent retyping the path gets wrong. A HEIC
+// (macOS's HDR capture) becomes a PNG, which every model reads.
 public func stageImages(_ images: [URL], in folder: URL) throws -> [URL] {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     return try images.enumerated().map { i, url in
-        let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension.lowercased()
-        let copy = folder.appendingPathComponent("shot-\(i + 1).\(ext)")
-        try FileManager.default.copyItem(at: url, to: copy)
+        let ext = url.pathExtension.lowercased()
+        if ["png", "jpg", "jpeg"].contains(ext) {
+            let copy = folder.appendingPathComponent("shot-\(i + 1).\(ext)")
+            try FileManager.default.copyItem(at: url, to: copy)
+            return copy
+        }
+        guard let png = pngData(of: url) else { throw CocoaError(.fileReadCorruptFile, userInfo: [NSURLErrorKey: url]) }
+        let copy = folder.appendingPathComponent("shot-\(i + 1).png")
+        try png.write(to: copy)
         return copy
     }
 }
@@ -165,9 +175,10 @@ public func mergeProjects(t3: [Project], recent: [String],
 }
 
 // The folder the panel starts on: `$SHOT_PROMPT_CWD`, else the last folder
-// you sent to, else the home folder.
-public func startFolder(environment: String?, recent: [String], home: URL) -> String {
-    environment ?? recent.first ?? home.path
+// you sent to that is still there, else the home folder.
+public func startFolder(environment: String?, recent: [String], home: URL,
+                        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String {
+    environment ?? recent.first(where: exists) ?? home.path
 }
 
 // Where an app bundle can stay: login items and permissions bind to its path,

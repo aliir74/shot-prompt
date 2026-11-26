@@ -51,9 +51,32 @@ func currentTarget() -> Target {
 
 func isInstalled(_ t: Target) -> Bool {
     if let cli = t.executable { return cliPath(cli) != nil }
-    if let id = t.bundleID { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil }
+    if t.isChatApp { return appURL(t) != nil }
     if t == .clipboard { return true }
     return FileManager.default.isExecutableFile(atPath: config.dispatchBin)
+}
+
+// The chat app's bundle, by the first of its bundle IDs found.
+func appURL(_ t: Target) -> URL? {
+    t.bundleIDs.lazy.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first
+}
+
+// The screenshots and prompt on the clipboard: the first image and the
+// prompt in one item (a chat box takes the image, a text field the prompt),
+// then one item per other image. Main thread.
+func copyToClipboard(images: [URL], prompt: String) -> Bool {
+    let pngs = images.compactMap(pngData(of:))
+    guard let first = pngs.first else { return false }
+    let item = NSPasteboardItem()
+    item.setData(first, forType: .png)
+    item.setString(prompt, forType: .string)
+    let rest = pngs.dropFirst().map { png -> NSPasteboardItem in
+        let i = NSPasteboardItem()
+        i.setData(png, forType: .png)
+        return i
+    }
+    NSPasteboard.general.clearContents()
+    return NSPasteboard.general.writeObjects([item] + rest)
 }
 
 func cliPath(_ name: String) -> String? {
@@ -198,6 +221,8 @@ final class Controller: NSObject, NSTextViewDelegate {
     // back) would otherwise skip the second and leave the first's height.
     private var panelTarget: CGFloat = 0
     private var projects: [Project] = []
+    // The target the open panel was built for: its hint and picker say so, so Enter sends there.
+    private var sendTarget: Target?
     // You chose a project in the picker, so the window no longer picks one.
     private var pickedByHand = false
     // Chips you removed, kept out when a settings change rebuilds the context.
@@ -819,6 +844,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
 
         let target = currentTarget()
+        sendTarget = target
         projects = target.usesProject ? allProjects() : []
         let gear = NSButton(image: NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")!,
                             target: self, action: #selector(openSettings(_:)))
@@ -1069,7 +1095,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         picker?.isEnabled = false
         chipViews.forEach { $0.isEnabled = false }
         status?.stringValue = "launching…"
-        let target = currentTarget()
+        let target = sendTarget ?? currentTarget()
         if target.usesProject {
             UserDefaults.standard.set(rememberFolder(cwd, in: recentFolders), forKey: recentFoldersKey)
         }
@@ -1102,16 +1128,8 @@ final class Controller: NSObject, NSTextViewDelegate {
             return dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
                             environment: config.environment, home: config.home)
         case .clipboard:
-            // One clipboard item with both: a chat box takes the image, a text field the prompt.
-            guard let png = images.first.flatMap(pngData(of:)) else { return (false, "cannot read the screenshot") }
-            DispatchQueue.main.sync {
-                let item = NSPasteboardItem()
-                item.setData(png, forType: .png)
-                item.setString(prompt, forType: .string)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([item])
-            }
-            return (true, "")
+            let copied = DispatchQueue.main.sync { copyToClipboard(images: images, prompt: prompt) }
+            return copied ? (true, "") : (false, "cannot read the screenshot")
         case .claudeApp, .chatGPT:
             // Without Accessibility the keys cannot reach the app: say so and keep what you typed.
             let ask = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -1125,8 +1143,8 @@ final class Controller: NSObject, NSTextViewDelegate {
         let folder = stagedRoot.appendingPathComponent(UUID().uuidString)
         let staged: [URL]
         do { staged = try stageImages(images, in: folder) } catch { return (false, error.localizedDescription) }
-        if let id = target.bundleID {
-            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else {
+        if target.isChatApp {
+            guard let app = appURL(target) else {
                 return (false, "\(target.title) is not installed")
             }
             DispatchQueue.main.async { ChatPaster.paste(images: staged, prompt: prompt, into: app) }
@@ -1256,8 +1274,10 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         for t in Target.allCases {
             let installed = isInstalled(t)
+            // A CLI not found here may still be on your shell's PATH (nvm, asdf), so it stays pickable.
+            let pickable = installed || t.executable != nil
             let m = NSMenuItem(title: installed ? t.title : "\(t.title) (not found)",
-                               action: installed ? #selector(pickTarget(_:)) : nil, keyEquivalent: "")
+                               action: pickable ? #selector(pickTarget(_:)) : nil, keyEquivalent: "")
             m.target = self
             m.state = t == current ? .on : .off
             m.representedObject = t.rawValue
@@ -1372,20 +1392,21 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
 // Pastes screenshots and a prompt into a desktop chat app: it comes
 // forward, Cmd+N opens a new chat, then each image and the prompt go in
 // through the clipboard and Cmd+V. You read it over and press Enter there.
-// Posting keys needs Accessibility, which the send checks first; should the
-// grant go in between, the first image stays on the clipboard to paste yourself.
+// Posting keys needs Accessibility, which the send checks first. Should the
+// app not open, or the grant go in between, everything goes on the clipboard.
 enum ChatPaster {
     static func paste(images: [URL], prompt: String, into appURL: URL) {
         let trusted = AXIsProcessTrusted()
         let pb = NSPasteboard.general
         let open = NSWorkspace.OpenConfiguration()
         open.activates = true
-        NSWorkspace.shared.openApplication(at: appURL, configuration: open) { app, _ in
+        NSWorkspace.shared.openApplication(at: appURL, configuration: open) { app, error in
             DispatchQueue.main.async {
+                // The panel is gone by now, so nothing you typed may be lost: it all goes on the clipboard.
                 guard trusted, let app else {
-                    pb.clearContents()
-                    if let png = images.first.flatMap(pngData(of:)) { pb.setData(png, forType: .png) }
-                    NSLog("ShotPrompt: pasting into a chat app needs Accessibility; the screenshot is on the clipboard")
+                    _ = copyToClipboard(images: images, prompt: prompt)
+                    NSLog("ShotPrompt: could not paste into %@ (%@); the screenshots and prompt are on the clipboard",
+                          appURL.lastPathComponent, error?.localizedDescription ?? "no Accessibility")
                     return
                 }
                 var steps: [() -> Void] = [{ key(kVK_ANSI_N, to: app) }]
@@ -1437,8 +1458,17 @@ pruneStaged(in: stagedRoot, now: Date(), maxAge: 24 * 3600)
 let loginItemOfferedKey = "loginItemOffered"
 let inApplications = isInApplicationsFolder(Bundle.main.bundlePath, home: config.home)
 if !runByLaunchAgent && inApplications && !UserDefaults.standard.bool(forKey: loginItemOfferedKey) {
-    UserDefaults.standard.set(true, forKey: loginItemOfferedKey)
-    try? SMAppService.mainApp.register()
+    do {
+        try SMAppService.mainApp.register()
+        // Only once it worked: a later launch tries again. Turning it off in the menu sticks.
+        UserDefaults.standard.set(true, forKey: loginItemOfferedKey)
+    } catch {
+        NSLog("ShotPrompt: open at login: %@", error.localizedDescription)
+    }
+}
+// Screenshots sent to a CLI or chat app go after a day, also while the app keeps running.
+let pruneTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
+    pruneStaged(in: stagedRoot, now: Date(), maxAge: 24 * 3600)
 }
 // Said once, on the first launch outside the LaunchAgent: what to do, and where the settings are.
 let welcomedKey = "welcomed"
@@ -1465,7 +1495,7 @@ var receiver: ReceiverServer?
 if let settings = receiverSettings(port: UserDefaults.standard.integer(forKey: receiverPortKey),
                                    token: UserDefaults.standard.string(forKey: receiverTokenKey)) {
     let context = ReceiverContext(
-        token: settings.token, defaultRoot: defaultFolder(),
+        token: settings.token, defaultRoot: config.threadCwd,
         projects: { allProjects() },
         saveImage: imageSaver(dir: FileManager.default.temporaryDirectory.appendingPathComponent("ShotPrompt-phone")),
         dispatch: { prompt, image, cwd in
