@@ -454,6 +454,10 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var dictationEndedAt: Date?
     private var activationObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
+    // The app the folder dialog took the front from, while the front goes back to it.
+    private var returnTo: NSRunningApplication?
+    // Waits for ShotPrompt to step back after the folder dialog, then gives the panel the keys.
+    private var handBackObserver: NSObjectProtocol?
     // The last app to come forward that is neither Shottr nor this one: the
     // app a capture is taken in, while Shottr is in front for the capture.
     private var lastApp: NSRunningApplication?
@@ -1028,10 +1032,12 @@ final class Controller: NSObject, NSTextViewDelegate {
             switch activationAction(
                 activatedPID: app?.processIdentifier, activatedBundleID: app?.bundleIdentifier,
                 ownPID: ProcessInfo.processInfo.processIdentifier,
+                returnToPID: self.returnTo?.processIdentifier,
                 panelOpen: self.panel != nil, iconOpen: self.icon != nil,
                 iconTimeLeft: self.idleTimer?.fireDate.timeIntervalSinceNow ?? 0,
                 dictating: self.dictating) {
             case .none: break
+            case .clearReturn: self.returnTo = nil
             case .dismissIfEmpty:
                 self.closePopup(refocus: false)
                 self.dismissIfEmpty()
@@ -1282,22 +1288,59 @@ final class Controller: NSObject, NSTextViewDelegate {
 
     // "Add project folder…" in the popup: the same folder dialog as the menu
     // bar's. The panel stays open meanwhile; a folder you add becomes the
-    // target, and choosing none leaves the target as it was.
+    // target, and choosing none leaves the target as it was. The dialog needs
+    // ShotPrompt in front, so afterwards the front goes back to the app you
+    // were in and the panel takes the keys again.
     private func addFolder() {
         closePopup(refocus: false)
         let f = field
+        let front = NSWorkspace.shared.frontmostApplication
+        let back = appToReturnTo(frontmostPID: front?.processIdentifier,
+                                 ownPID: ProcessInfo.processInfo.processIdentifier) == nil ? nil : front
         menuOpen = true
         idleTimer?.invalidate()
         let added = chooseProjectFolders()
-        menuOpen = false
-        // A newer capture may have replaced the panel meanwhile: leave it alone.
-        guard let f, field === f else { return }
-        projects = allProjects()
-        entries = pickerEntries(projects: projects, defaultRoot: defaultFolder())
-        if let t = addedFolderTarget(added, entries: entries) { picked = t }
-        retarget()
-        refocus()
-        if !hasText { armIdle() }
+        // A newer capture may have replaced the panel meanwhile: it is left as
+        // it is, but still gets the front handed back.
+        if let f, field === f {
+            projects = allProjects()
+            entries = pickerEntries(projects: projects, defaultRoot: defaultFolder())
+            if let t = addedFolderTarget(added, entries: entries) { picked = t }
+            retarget()
+        }
+        handFrontBack(to: back)
+    }
+
+    // Gives the front back to `app` and the keys to the panel. The panel is
+    // non-activating, so it can be key while that app is in front, as when it
+    // opens. Until then menuOpen keeps the panel's resign-key and the app
+    // switch from closing it.
+    private func handFrontBack(to app: NSRunningApplication?) {
+        let f = field
+        var done = false
+        let finish = { [weak self] in
+            guard let self, !done else { return }
+            done = true
+            if let o = self.handBackObserver { NotificationCenter.default.removeObserver(o) }
+            self.handBackObserver = nil
+            // A newer capture replaced the panel meanwhile: it has its own state.
+            guard self.field === f else { return }
+            self.menuOpen = false
+            guard f != nil else { return }
+            self.refocus()
+            if !self.hasText { self.armIdle() }
+        }
+        menuOpen = true
+        guard let app, NSApp.isActive else { returnTo = nil; return finish() }
+        returnTo = app
+        // A key panel loses the keys while its app is still giving up the
+        // front, so the panel takes them once ShotPrompt has stepped back.
+        handBackObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { _ in finish() }
+        if !app.activate() { returnTo = nil; return finish() }
+        // The app may not take the front (it hung or quit): stop waiting.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { finish() }
     }
 
     // The chip at the right edge as wide as its label, the hint at full width
@@ -1565,6 +1608,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         menuObservers.forEach(NotificationCenter.default.removeObserver)
         menuObservers = []
         menuOpen = false
+        returnTo = nil
+        if let o = handBackObserver { NotificationCenter.default.removeObserver(o) }
+        handBackObserver = nil
         icon?.orderOut(nil)
         icon = nil
         panel?.orderOut(nil)

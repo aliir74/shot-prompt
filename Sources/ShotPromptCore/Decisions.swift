@@ -124,6 +124,9 @@ public func dictationHolds(active: Bool, endedAt: Date?, now: Date) -> Bool {
 
 public enum ActivationAction: Equatable {
     case none
+    // The app ShotPrompt handed the front back to (after the folder dialog)
+    // is in front again: forget it, and keep the panel.
+    case clearReturn
     // The panel is open: close it if nothing is typed.
     case dismissIfEmpty
     // Only the icon is up: let it leave after this many seconds.
@@ -132,15 +135,23 @@ public enum ActivationAction: Equatable {
 
 // Switching apps before typing means the capture was not for Claude, so an
 // empty prompt closes and the icon leaves soon after, unless you are
-// dictating. This app coming forward and a capture tool coming forward
-// around a capture are not switches.
+// dictating. This app coming forward, the folder dialog handing the front
+// back, and a capture tool coming forward around a capture are not switches.
 public func activationAction(activatedPID: Int32?, activatedBundleID: String?, ownPID: Int32,
-                             panelOpen: Bool, iconOpen: Bool,
+                             returnToPID: Int32? = nil, panelOpen: Bool, iconOpen: Bool,
                              iconTimeLeft: TimeInterval, dictating: Bool = false) -> ActivationAction {
-    if activatedPID == ownPID || dictating { return .none }
+    if activatedPID == ownPID { return .none }
+    if let r = returnToPID, activatedPID == r { return .clearReturn }
+    if dictating { return .none }
     if panelOpen { return .dismissIfEmpty }
     guard iconOpen, !isCaptureTool(activatedBundleID), iconTimeLeft > iconAwaySeconds else { return .none }
     return .shortenIcon(iconAwaySeconds)
+}
+
+// The app to give the front back to after ShotPrompt comes forward for a
+// dialog: the one in front before, unless that was ShotPrompt itself.
+public func appToReturnTo(frontmostPID: Int32?, ownPID: Int32) -> Int32? {
+    frontmostPID == ownPID ? nil : frontmostPID
 }
 
 public enum TextCommand: Equatable {

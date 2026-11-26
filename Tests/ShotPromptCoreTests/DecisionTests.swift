@@ -81,9 +81,9 @@ final class DecisionTests: XCTestCase {
         XCTAssertFalse(expandsForDictation(micLive: false, onIcon: true))
     }
 
-    func act(pid: Int32? = 50, bundle: String? = "com.other", panel: Bool = false,
+    func act(pid: Int32? = 50, bundle: String? = "com.other", returnTo: Int32? = nil, panel: Bool = false,
              icon: Bool = false, left: TimeInterval = 20, dictating: Bool = false) -> ActivationAction {
-        activationAction(activatedPID: pid, activatedBundleID: bundle, ownPID: 1,
+        activationAction(activatedPID: pid, activatedBundleID: bundle, ownPID: 1, returnToPID: returnTo,
                          panelOpen: panel, iconOpen: icon, iconTimeLeft: left, dictating: dictating)
     }
 
@@ -99,6 +99,22 @@ final class DecisionTests: XCTestCase {
         XCTAssertEqual(act(), .none, "nothing on screen")
         XCTAssertEqual(act(panel: true, dictating: true), .none, "Wispr Flow coming forward while you talk")
         XCTAssertEqual(act(icon: true, dictating: true), .none)
+    }
+
+    func testActivationReturnTo() {
+        XCTAssertEqual(act(pid: 50, returnTo: 50, panel: true), .clearReturn, "the folder dialog handing the front back")
+        XCTAssertEqual(act(pid: 50, returnTo: 50, icon: true), .clearReturn)
+        XCTAssertEqual(act(pid: 51, returnTo: 50, panel: true), .dismissIfEmpty, "a different app is a switch")
+        XCTAssertEqual(act(pid: nil, returnTo: 50, panel: true), .dismissIfEmpty, "unknown app")
+        XCTAssertEqual(act(pid: 50, returnTo: 50, panel: true, dictating: true), .clearReturn,
+                       "cleared even while dictating, so a later switch to it still counts")
+        XCTAssertEqual(act(pid: 1, returnTo: 1, panel: true), .none, "this app coming forward")
+    }
+
+    func testAppToReturnTo() {
+        XCTAssertEqual(appToReturnTo(frontmostPID: 50, ownPID: 1), 50)
+        XCTAssertNil(appToReturnTo(frontmostPID: 1, ownPID: 1), "not ShotPrompt itself")
+        XCTAssertNil(appToReturnTo(frontmostPID: nil, ownPID: 1))
     }
 
     func testTextCommand() {
