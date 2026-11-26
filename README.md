@@ -11,7 +11,7 @@ Pick where Enter sends in the menu bar menu (the viewfinder icon), under **Send 
 
 | Target | What happens |
 | --- | --- |
-| Claude Code | A new terminal window opens in the project folder and runs `claude` with your prompt and the screenshot paths (their folder is added with `--add-dir`, so reading them asks nothing). |
+| Claude Code | A new terminal window opens in the project folder and runs `claude` with your prompt and the screenshot paths. |
 | Codex | Same, with `codex --image <screenshot> -- <prompt>`. |
 | Cursor Agent | Same, with `cursor-agent` and the screenshot paths. |
 | Claude app | The Claude desktop app comes forward, opens a new chat, and gets the screenshot and prompt pasted in. You press Enter there. |

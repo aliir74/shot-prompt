@@ -95,15 +95,12 @@ public func promptWithImagePaths(_ prompt: String, images: [URL]) -> String {
 }
 
 // The arguments after the CLI's name. Codex attaches images itself; Claude
-// Code and Cursor Agent read them from the paths in the prompt. Claude Code
-// gets their folder with --add-dir, so reading them asks for no permission.
+// Code and Cursor Agent read them from the paths in the prompt. (Claude
+// Code's --add-dir would show a trust prompt whose default answer exits.)
 public func terminalArguments(_ target: Target, prompt: String, images: [URL]) -> [String] {
     switch target {
     case .codex:
         return images.map { "--image=" + $0.path } + ["--", prompt]
-    case .claudeCode where !images.isEmpty:
-        let folder = images[0].deletingLastPathComponent().path
-        return ["--add-dir", folder, "--", promptWithImagePaths(prompt, images: images)]
     default:
         return [promptWithImagePaths(prompt, images: images)]
     }
