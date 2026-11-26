@@ -11,16 +11,17 @@ Pick where Enter sends in the menu bar menu (the viewfinder icon), under **Send 
 
 | Target | What happens |
 | --- | --- |
-| Claude Code | A new terminal window opens in the project folder and runs `claude` with your prompt and the screenshot paths. |
+| Claude Code | A new terminal window opens in the project folder and runs `claude` with your prompt and the screenshot paths (their folder is added with `--add-dir`, so reading them asks nothing). |
 | Codex | Same, with `codex --image <screenshot> -- <prompt>`. |
 | Cursor Agent | Same, with `cursor-agent` and the screenshot paths. |
 | Claude app | The Claude desktop app comes forward, opens a new chat, and gets the screenshot and prompt pasted in. You press Enter there. |
 | ChatGPT app | Same, in the ChatGPT desktop app. |
+| Clipboard | The screenshot and prompt go on the clipboard as one item: a chat box pastes the image, a text field the prompt. The default when none of the others is installed. |
 | Custom command (T3 Code) | Runs `$SHOT_PROMPT_DISPATCH` (see [Dispatch command](#dispatch-command)); with a T3 dispatcher, a new [T3 Code](https://t3.codes) thread opens. An install with `SHOT_PROMPT_DISPATCH` set starts here. |
 
 - Terminal targets open a `.command` file, so they use the app your Mac opens those with (Terminal, or iTerm if you set it). The CLI is looked up in `~/.local/bin`, Homebrew and the usual npm/bun folders; if it is elsewhere, your shell's PATH finds it.
-- Screenshots are copied to `~/Library/Caches/ShotPrompt/sent` for the tool to read and removed after a day.
-- The chat app targets post Cmd+N and Cmd+V to the app, which needs Accessibility. Until you allow it, the screenshot is left on the clipboard and the app comes forward.
+- Screenshots are copied to `~/Library/Caches/ShotPrompt/sent` as `shot-1.png` and so on (macOS's own names hold special spaces an agent can retype wrong) for the tool to read, and removed after a day.
+- The chat app targets post Cmd+N and Cmd+V to the app, which needs Accessibility. Until you allow it, Enter asks for it and keeps the panel open with what you typed.
 - The project picker lists your T3 projects (when T3 is installed), the folders you sent to before, and folders you add with **Add project folder…**. The chat app targets have no project, so no picker.
 
 - Watches the folder macOS saves screenshots to (the Desktop, or what you set in the Screenshot app's Options) and `~/Pictures` for Shottr (turn on its "save after capture"). A new PNG, JPEG or HEIC counts when it is tagged as a screen capture (macOS and Shottr both tag their files) and was made in the last minute, so an old screenshot moved in does not. macOS asks once for access to the Desktop folder. With the floating thumbnail on, macOS saves the file when the thumbnail goes, so swipe it away for the icon to come at once.

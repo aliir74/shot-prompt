@@ -9,6 +9,8 @@ public enum Target: String, CaseIterable, Equatable {
     case claudeApp, chatGPT
     // `$SHOT_PROMPT_DISPATCH --cwd DIR --image PATH… PROMPT`: T3 Code, or your own script.
     case command
+    // The screenshot and prompt go on the clipboard, to paste anywhere.
+    case clipboard
 
     public var title: String {
         switch self {
@@ -18,6 +20,7 @@ public enum Target: String, CaseIterable, Equatable {
         case .claudeApp: return "Claude app"
         case .chatGPT: return "ChatGPT app"
         case .command: return "Custom command (T3 Code)"
+        case .clipboard: return "Clipboard"
         }
     }
 
@@ -27,7 +30,7 @@ public enum Target: String, CaseIterable, Equatable {
         case .claudeCode: return "claude"
         case .codex: return "codex"
         case .cursorAgent: return "cursor-agent"
-        case .claudeApp, .chatGPT, .command: return nil
+        case .claudeApp, .chatGPT, .command, .clipboard: return nil
         }
     }
 
@@ -36,24 +39,25 @@ public enum Target: String, CaseIterable, Equatable {
         switch self {
         case .claudeApp: return "com.anthropic.claudefordesktop"
         case .chatGPT: return "com.openai.chat"
-        case .claudeCode, .codex, .cursorAgent, .command: return nil
+        case .claudeCode, .codex, .cursorAgent, .command, .clipboard: return nil
         }
     }
 
     // Whether the target works in a project folder (and the panel shows the picker).
-    public var usesProject: Bool { bundleID == nil }
+    public var usesProject: Bool { bundleID == nil && self != .clipboard }
 }
 
 public let targetKey = "target"
 
 // The target you picked; else the custom command when `$SHOT_PROMPT_DISPATCH`
-// is set (an install from before targets existed); else the first one installed.
+// is set (an install from before targets existed); else the first one
+// installed; else the clipboard, which needs nothing.
 public func currentTarget(stored: String?, dispatchFromEnvironment: Bool,
                           isInstalled: (Target) -> Bool) -> Target {
     if let s = stored, let t = Target(rawValue: s) { return t }
     if dispatchFromEnvironment { return .command }
     let order: [Target] = [.claudeCode, .codex, .cursorAgent, .claudeApp, .chatGPT]
-    return order.first(where: isInstalled) ?? .claudeCode
+    return order.first(where: isInstalled) ?? .clipboard
 }
 
 // Folders a terminal's login shell usually has on its PATH, for finding a CLI
@@ -84,11 +88,15 @@ public func promptWithImagePaths(_ prompt: String, images: [URL]) -> String {
 }
 
 // The arguments after the CLI's name. Codex attaches images itself; Claude
-// Code and Cursor Agent read them from the paths in the prompt.
+// Code and Cursor Agent read them from the paths in the prompt. Claude Code
+// gets their folder with --add-dir, so reading them asks for no permission.
 public func terminalArguments(_ target: Target, prompt: String, images: [URL]) -> [String] {
     switch target {
     case .codex:
         return images.map { "--image=" + $0.path } + ["--", prompt]
+    case .claudeCode where !images.isEmpty:
+        let folder = images[0].deletingLastPathComponent().path
+        return ["--add-dir", folder, "--", promptWithImagePaths(prompt, images: images)]
     default:
         return [promptWithImagePaths(prompt, images: images)]
     }
@@ -113,11 +121,14 @@ public func terminalScript(_ target: Target, executable: String?, prompt: String
 }
 
 // Copies the images to a folder of their own, so a CLI that reads them later
-// still finds them after the panel deletes its window shot. Returns the copies.
+// still finds them after the panel deletes its window shot. The copies get
+// plain names (shot-1.png): macOS's own hold spaces and a narrow no-break
+// space before AM/PM, which an agent retyping the path gets wrong.
 public func stageImages(_ images: [URL], in folder: URL) throws -> [URL] {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     return try images.enumerated().map { i, url in
-        let copy = folder.appendingPathComponent("\(i + 1)-" + url.lastPathComponent)
+        let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension.lowercased()
+        let copy = folder.appendingPathComponent("shot-\(i + 1).\(ext)")
         try FileManager.default.copyItem(at: url, to: copy)
         return copy
     }
@@ -157,4 +168,25 @@ public func mergeProjects(t3: [Project], recent: [String],
 // you sent to, else the home folder.
 public func startFolder(environment: String?, recent: [String], home: URL) -> String {
     environment ?? recent.first ?? home.path
+}
+
+// Where an app bundle can stay: login items and permissions bind to its path,
+// so a copy run from the disk image or Downloads must be moved first.
+public func isInApplicationsFolder(_ bundlePath: String, home: URL) -> Bool {
+    let path = (bundlePath as NSString).standardizingPath
+    return path.hasPrefix("/Applications/") || path.hasPrefix(home.appendingPathComponent("Applications").path + "/")
+}
+
+// The note on first launch: what to do, where it goes, and where the settings are.
+public func welcomeText(target: Target, inApplications: Bool) -> String {
+    let move = inApplications ? "" : "Move ShotPrompt to your Applications folder first, then open it from there.\n\n"
+    let goes = target == .clipboard
+        ? "No AI tool was found, so it goes to the clipboard: paste it into any chat."
+        : "It goes to \(target.title) with your screenshot."
+    return move + """
+        Take a screenshot (Cmd+Shift+4), start typing, and press Enter. \(goes)
+
+        The menu bar icon (a viewfinder) changes where it goes and what it sends. \
+        macOS asks once for the Desktop folder, where screenshots are saved.
+        """
 }

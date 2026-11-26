@@ -52,6 +52,7 @@ func currentTarget() -> Target {
 func isInstalled(_ t: Target) -> Bool {
     if let cli = t.executable { return cliPath(cli) != nil }
     if let id = t.bundleID { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil }
+    if t == .clipboard { return true }
     return FileManager.default.isExecutableFile(atPath: config.dispatchBin)
 }
 
@@ -1096,10 +1097,31 @@ final class Controller: NSObject, NSTextViewDelegate {
     // copies of the images, since the window shot is deleted when the panel goes.
     private static func deliver(_ target: Target, prompt: String, images: [URL], cwd: String)
         -> (ok: Bool, output: String) {
-        if target == .command {
+        switch target {
+        case .command:
             return dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
                             environment: config.environment, home: config.home)
+        case .clipboard:
+            // One clipboard item with both: a chat box takes the image, a text field the prompt.
+            guard let png = images.first.flatMap(pngData(of:)) else { return (false, "cannot read the screenshot") }
+            DispatchQueue.main.sync {
+                let item = NSPasteboardItem()
+                item.setData(png, forType: .png)
+                item.setString(prompt, forType: .string)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([item])
+            }
+            return (true, "")
+        case .claudeApp, .chatGPT:
+            // Without Accessibility the keys cannot reach the app: say so and keep what you typed.
+            let ask = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            guard AXIsProcessTrustedWithOptions(ask) else {
+                return (false, "allow ShotPrompt in Privacy & Security > Accessibility, then press Enter again")
+            }
+        case .claudeCode, .codex, .cursorAgent:
+            break
         }
+        pruneStaged(in: stagedRoot, now: Date(), maxAge: 24 * 3600)
         let folder = stagedRoot.appendingPathComponent(UUID().uuidString)
         let staged: [URL]
         do { staged = try stageImages(images, in: folder) } catch { return (false, error.localizedDescription) }
@@ -1350,12 +1372,11 @@ final class SettingsMenu: NSObject, NSMenuDelegate {
 // Pastes screenshots and a prompt into a desktop chat app: it comes
 // forward, Cmd+N opens a new chat, then each image and the prompt go in
 // through the clipboard and Cmd+V. You read it over and press Enter there.
-// Posting keys needs Accessibility; without it the first image stays on the
-// clipboard and the app comes forward, so you paste it yourself.
+// Posting keys needs Accessibility, which the send checks first; should the
+// grant go in between, the first image stays on the clipboard to paste yourself.
 enum ChatPaster {
     static func paste(images: [URL], prompt: String, into appURL: URL) {
-        let trusted = AXIsProcessTrustedWithOptions(
-            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+        let trusted = AXIsProcessTrusted()
         let pb = NSPasteboard.general
         let open = NSWorkspace.OpenConfiguration()
         open.activates = true
@@ -1414,26 +1435,21 @@ if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bu
 pruneStaged(in: stagedRoot, now: Date(), maxAge: 24 * 3600)
 // The first launch from a download opens at login from then on; the menu turns it off.
 let loginItemOfferedKey = "loginItemOffered"
-if !runByLaunchAgent && Bundle.main.bundleIdentifier != nil
-    && !UserDefaults.standard.bool(forKey: loginItemOfferedKey) {
+let inApplications = isInApplicationsFolder(Bundle.main.bundlePath, home: config.home)
+if !runByLaunchAgent && inApplications && !UserDefaults.standard.bool(forKey: loginItemOfferedKey) {
     UserDefaults.standard.set(true, forKey: loginItemOfferedKey)
     try? SMAppService.mainApp.register()
 }
 // Said once, on the first launch outside the LaunchAgent: what to do, and where the settings are.
 let welcomedKey = "welcomed"
-if !runByLaunchAgent && !UserDefaults.standard.bool(forKey: welcomedKey) {
-    UserDefaults.standard.set(true, forKey: welcomedKey)
+if !runByLaunchAgent && Bundle.main.bundleIdentifier != nil && !UserDefaults.standard.bool(forKey: welcomedKey) {
+    // Run from the disk image or Downloads, it says so every launch until moved.
+    if inApplications { UserDefaults.standard.set(true, forKey: welcomedKey) }
     // Once the run loop is up, so the alert comes forward like any app's.
     DispatchQueue.main.async {
         let alert = NSAlert()
         alert.messageText = "ShotPrompt is running"
-        alert.informativeText = """
-            Take a screenshot (Cmd+Shift+4), start typing, and press Enter. \
-            It goes to \(currentTarget().title) with your screenshot.
-
-            The menu bar icon (a viewfinder) changes where it goes and what it sends. \
-            macOS asks once for the Desktop folder, where screenshots are saved.
-            """
+        alert.informativeText = welcomeText(target: currentTarget(), inApplications: inApplications)
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }

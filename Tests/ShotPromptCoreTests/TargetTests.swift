@@ -4,11 +4,11 @@ import XCTest
 final class TargetTests: XCTestCase {
     func testTargetProperties() {
         XCTAssertEqual(Target.allCases.map(\.title), ["Claude Code", "Codex", "Cursor Agent", "Claude app",
-                                                      "ChatGPT app", "Custom command (T3 Code)"])
-        XCTAssertEqual(Target.allCases.map(\.executable), ["claude", "codex", "cursor-agent", nil, nil, nil])
+                                                      "ChatGPT app", "Custom command (T3 Code)", "Clipboard"])
+        XCTAssertEqual(Target.allCases.map(\.executable), ["claude", "codex", "cursor-agent", nil, nil, nil, nil])
         XCTAssertEqual(Target.allCases.map(\.bundleID),
-                       [nil, nil, nil, "com.anthropic.claudefordesktop", "com.openai.chat", nil])
-        XCTAssertEqual(Target.allCases.filter(\.usesProject), [.claudeCode, .codex, .cursorAgent, .command])
+                       [nil, nil, nil, "com.anthropic.claudefordesktop", "com.openai.chat", nil, nil])
+        XCTAssertEqual(Target.allCases.filter(\.usesProject), [.claudeCode, .codex, .cursorAgent, .command], "not chat apps or the clipboard")
     }
 
     func testCurrentTarget() {
@@ -21,7 +21,8 @@ final class TargetTests: XCTestCase {
                        .chatGPT)
         XCTAssertEqual(currentTarget(stored: nil, dispatchFromEnvironment: false,
                                      isInstalled: { $0 == .codex || $0 == .claudeApp }), .codex, "CLIs first")
-        XCTAssertEqual(currentTarget(stored: nil, dispatchFromEnvironment: false, isInstalled: none), .claudeCode)
+        XCTAssertEqual(currentTarget(stored: nil, dispatchFromEnvironment: false, isInstalled: none), .clipboard,
+                       "nothing installed: the clipboard works anywhere")
     }
 
     func testFindExecutable() throws {
@@ -56,6 +57,9 @@ final class TargetTests: XCTestCase {
         XCTAssertEqual(terminalArguments(.codex, prompt: "why?", images: [a, b]),
                        ["--image=/s/a.png", "--image=/s/b.png", "--", "why?"])
         XCTAssertEqual(terminalArguments(.claudeCode, prompt: "why?", images: [a]),
+                       ["--add-dir", "/s", "--", "why?\n\nScreenshot (read the image file):\n- /s/a.png"])
+        XCTAssertEqual(terminalArguments(.claudeCode, prompt: "why?", images: []), ["why?"])
+        XCTAssertEqual(terminalArguments(.cursorAgent, prompt: "why?", images: [a]),
                        ["why?\n\nScreenshot (read the image file):\n- /s/a.png"])
     }
 
@@ -78,11 +82,15 @@ final class TargetTests: XCTestCase {
 
     func testStageAndPrune() throws {
         let dir = try makeTempDir(self)
-        let src = dir.appendingPathComponent("Screenshot 1.png")
+        let src = dir.appendingPathComponent("Screenshot 1.02\u{202F}PM.PNG")
         FileManager.default.createFile(atPath: src.path, contents: Data([1, 2]))
+        let bare = dir.appendingPathComponent("noext")
+        FileManager.default.createFile(atPath: bare.path, contents: Data([3]))
+        XCTAssertEqual(try stageImages([bare], in: dir.appendingPathComponent("three")).map(\.lastPathComponent),
+                       ["shot-1.png"])
         let root = dir.appendingPathComponent("sent")
         let copies = try stageImages([src, src], in: root.appendingPathComponent("one"))
-        XCTAssertEqual(copies.map(\.lastPathComponent), ["1-Screenshot 1.png", "2-Screenshot 1.png"])
+        XCTAssertEqual(copies.map(\.lastPathComponent), ["shot-1.png", "shot-2.png"])
         XCTAssertEqual(FileManager.default.contents(atPath: copies[0].path), Data([1, 2]))
         XCTAssertThrowsError(try stageImages([dir.appendingPathComponent("missing.png")],
                                              in: root.appendingPathComponent("two")))
@@ -113,5 +121,22 @@ final class TargetTests: XCTestCase {
         XCTAssertEqual(startFolder(environment: "/env", recent: ["/r"], home: home), "/env")
         XCTAssertEqual(startFolder(environment: nil, recent: ["/r"], home: home), "/r")
         XCTAssertEqual(startFolder(environment: nil, recent: [], home: home), "/Users/x")
+    }
+
+    func testIsInApplicationsFolder() {
+        let home = URL(fileURLWithPath: "/Users/x")
+        XCTAssertTrue(isInApplicationsFolder("/Applications/ShotPrompt.app", home: home))
+        XCTAssertTrue(isInApplicationsFolder("/Users/x/Applications/ShotPrompt.app", home: home))
+        XCTAssertFalse(isInApplicationsFolder("/Volumes/ShotPrompt/ShotPrompt.app", home: home), "the disk image")
+        XCTAssertFalse(isInApplicationsFolder("/Users/x/Downloads/ShotPrompt.app", home: home))
+        XCTAssertFalse(isInApplicationsFolder("/Applications/../tmp/ShotPrompt.app", home: home))
+    }
+
+    func testWelcomeText() {
+        let codex = welcomeText(target: .codex, inApplications: true)
+        XCTAssertTrue(codex.hasPrefix("Take a screenshot"))
+        XCTAssertTrue(codex.contains("It goes to Codex with your screenshot."))
+        XCTAssertTrue(welcomeText(target: .clipboard, inApplications: true).contains("No AI tool was found"))
+        XCTAssertTrue(welcomeText(target: .codex, inApplications: false).hasPrefix("Move ShotPrompt"))
     }
 }
