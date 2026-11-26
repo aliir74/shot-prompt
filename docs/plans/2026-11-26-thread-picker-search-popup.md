@@ -37,11 +37,11 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
 
 ### Task 1.2: Word search
 **Files:** Modify: `Sources/ShotPromptCore/TargetPicker.swift`, `Tests/ShotPromptCoreTests/TargetPickerTests.swift`
-- [ ] Write failing tests for `matchesQuery`: empty and whitespace-only queries match everything; `"shot fix"` matches fields `["Fix the picker", "shot-prompt"]` (words in different fields, any order); `"SHOT"` matches `"shot-prompt"`; `"rompt"` matches (anywhere in a word); `"shot zzz"` does not match.
-- [ ] Run `swift test --filter TargetPickerTests`, see red.
-- [ ] Implement `public func matchesQuery(_ query: String, fields: [String]) -> Bool`: split the query on whitespace, lowercase; every word must be contained in the lowercased fields joined with `"\n"`.
-- [ ] Verify: `swift test --filter TargetPickerTests` → pass.
-- [ ] Commit: `Match typed words anywhere in a title or project name`
+- [x] Write failing tests for `matchesQuery`: empty and whitespace-only queries match everything; `"shot fix"` matches fields `["Fix the picker", "shot-prompt"]` (words in different fields, any order); `"SHOT"` matches `"shot-prompt"`; `"rompt"` matches (anywhere in a word); `"shot zzz"` does not match.
+- [x] Run `swift test --filter TargetPickerTests`, see red.
+- [x] Implement `public func matchesQuery(_ query: String, fields: [String]) -> Bool`: split the query on whitespace, lowercase; every word must be contained in the lowercased fields joined with `"\n"`.
+- [x] Verify: `swift test --filter TargetPickerTests` → pass.
+- [x] Commit: `Match typed words anywhere in a title or project name`
 
 ### Task 1.3: Popup rows, selection and keys
 **Files:** Modify: `Sources/ShotPromptCore/TargetPicker.swift`, `Sources/ShotPromptCore/Decisions.swift`, `Sources/ShotPromptCore/Layout.swift`, `Sources/ShotPrompt/main.swift` (one placeholder line), `Tests/ShotPromptCoreTests/TargetPickerTests.swift`, `Tests/ShotPromptCoreTests/DecisionTests.swift`, `Tests/ShotPromptCoreTests/LayoutTests.swift`

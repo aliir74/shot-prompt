@@ -34,4 +34,14 @@ final class TargetPickerTests: XCTestCase {
         XCTAssertEqual(threadDetail(t, now: now), "app · 2m")
         XCTAssertEqual(threadDetail(OpenThread(id: "1", title: "Fix", project: "app"), now: now), "app")
     }
+
+    func testMatchesQuery() {
+        let fields = ["Fix the picker", "shot-prompt"]
+        XCTAssertTrue(matchesQuery("", fields: fields))
+        XCTAssertTrue(matchesQuery("  \t ", fields: fields))
+        XCTAssertTrue(matchesQuery("shot fix", fields: fields), "words in different fields, any order")
+        XCTAssertTrue(matchesQuery("SHOT", fields: fields))
+        XCTAssertTrue(matchesQuery("rompt", fields: fields), "anywhere in a word")
+        XCTAssertFalse(matchesQuery("shot zzz", fields: fields))
+    }
 }

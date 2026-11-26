@@ -25,3 +25,10 @@ public func threadDetail(_ thread: OpenThread, now: Date) -> String {
     guard let d = thread.updatedAt else { return thread.project }
     return "\(thread.project) · \(relativeTime(from: d, now: now))"
 }
+
+// Every typed word must appear somewhere in the fields, in any order and in
+// any field, ignoring case. An empty query matches everything.
+public func matchesQuery(_ query: String, fields: [String]) -> Bool {
+    let text = fields.joined(separator: "\n").lowercased()
+    return query.lowercased().split(whereSeparator: \.isWhitespace).allSatisfy { text.contains($0) }
+}
