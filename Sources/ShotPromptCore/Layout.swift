@@ -101,6 +101,33 @@ public func popupFrame(panel: CGRect, height: CGFloat, visible: CGRect) -> CGRec
     return CGRect(origin: clamp(origin: CGPoint(x: panel.minX, y: y), size: size, in: visible), size: size)
 }
 
+public enum TargetChipMetrics {
+    public static let height: CGFloat = 20
+    // Room around the label inside the chip.
+    public static let padding: CGFloat = 16
+    public static let minWidth: CGFloat = 60
+    // Space between the hint and the chip.
+    public static let gap: CGFloat = 8
+}
+
+public struct TargetLayout: Equatable {
+    public let chipFrame: CGRect
+    public let hintWidth: CGFloat
+}
+
+// The target chip sits at the right edge of the status row, as wide as its
+// label; the hint keeps its full width first, so a long message shrinks the
+// chip, down to minWidth. The hint gets what is left, never less than 0.
+public func targetLayout(containerWidth: CGFloat, labelWidth: CGFloat, hintMinX: CGFloat,
+                         hintWidth: CGFloat) -> TargetLayout {
+    let right = containerWidth - 12
+    let want = ceil(labelWidth) + TargetChipMetrics.padding
+    let room = right - hintMinX - ceil(hintWidth) - TargetChipMetrics.gap
+    let w = min(want, max(room, TargetChipMetrics.minWidth))
+    return TargetLayout(chipFrame: CGRect(x: right - w, y: 9, width: w, height: TargetChipMetrics.height),
+                        hintWidth: max(right - w - hintMinX - TargetChipMetrics.gap, 0))
+}
+
 public struct Fade: Equatable {
     // Fade the top edge: text is hidden above.
     public let top: Bool

@@ -92,14 +92,14 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
 
 ### Task 1.5: Chip, hint, status layout and send outcome
 **Files:** Modify: `Sources/ShotPromptCore/TargetPicker.swift`, `Sources/ShotPromptCore/Layout.swift`, `Tests/ShotPromptCoreTests/TargetPickerTests.swift`, `Tests/ShotPromptCoreTests/LayoutTests.swift`
-- [ ] Write failing tests:
+- [x] Write failing tests:
   - `cutTitle`: a short title is unchanged; a title of `threadTitleChars + 5` characters comes back `threadTitleChars` long and ends with `"…"`.
   - `targetChip(.thread(id: "1"), …)` → `label: "→ Fix the picker"`, `toThread: true`, `toolTip: "Adds to: Fix the picker · app (Tab to change)"`; an id not in `threads` → `label: "→ thread"`. `targetChip(.newThread(root: "/w/a"), …)` → `label: "+ A"` (the entry name), `toThread: false`, `toolTip: "New thread in /w/a (Tab to change)"` (the entry toolTip); a root not in `entries` → `"+ <last path component>"`.
   - `targetHint(hasPicker: true) == "↩ send · ⇥ change"`, `targetHint(hasPicker: false) == "↩ new T3 thread · esc dismiss"`.
   - `targetLayout(containerWidth: 420, labelWidth: 60.2, hintMinX: 104, hintWidth: 110)` → `chipFrame: CGRect(x: 331, y: 9, width: 77, height: 20)`, `hintWidth: 219`. `labelWidth: 500` → chip width 186 and `hintWidth: 110` (the hint keeps its full width). `labelWidth: 500, hintWidth: 600` (a long error) → chip width 60, `hintWidth: 236`. `targetLayout(containerWidth: 100, labelWidth: 60.2, hintMinX: 104, hintWidth: 110)` → chip width 60, `hintWidth: 0` (never negative).
   - `sendOutcome(ok: false, output: "boom", …)` → `.failure("failed: boom")`; ok with `.newThread` → `.close`; ok with `.thread(id:)` in `threads` → `.notice("✓ Added to <cut title>")`; ok with an unknown id → `.notice("✓ Added to thread")`. `addedNoticeSeconds == 1`.
-- [ ] Run `swift test --filter 'TargetPickerTests|LayoutTests'`, see red.
-- [ ] Implement in `TargetPicker.swift`:
+- [x] Run `swift test --filter 'TargetPickerTests|LayoutTests'`, see red.
+- [x] Implement in `TargetPicker.swift`:
   - `public func cutTitle(_ title: String, to chars: Int = threadTitleChars) -> String`
   - `public struct TargetChip: Equatable { public let label: String; public let toThread: Bool; public let toolTip: String }`
   - `public func targetChip(_ target: SendTarget, threads: [OpenThread], entries: [PickerEntry]) -> TargetChip`
@@ -107,9 +107,9 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
   - `public let addedNoticeSeconds: TimeInterval = 1`
   - `public enum SendOutcome: Equatable { case close; case notice(String); case failure(String) }`
   - `public func sendOutcome(ok: Bool, output: String, target: SendTarget, threads: [OpenThread]) -> SendOutcome`
-- [ ] Implement in `Layout.swift`: `public enum TargetChipMetrics { height = 20, padding = 16, minWidth = 60, gap = 8 }`, `public struct TargetLayout: Equatable { public let chipFrame: CGRect; public let hintWidth: CGFloat }`, `public func targetLayout(containerWidth: CGFloat, labelWidth: CGFloat, hintMinX: CGFloat, hintWidth: CGFloat) -> TargetLayout`. Formula: `right = containerWidth - 12`; `want = ceil(labelWidth) + padding`; `room = right - hintMinX - ceil(hintWidth) - gap`; `w = min(want, max(room, minWidth))`; chip at `x: right - w, y: 9`; returned `hintWidth = max(right - w - hintMinX - gap, 0)`.
-- [ ] Verify: `swift test --filter 'TargetPickerTests|LayoutTests'` → pass.
-- [ ] Commit: `Add the target chip, the short hint and the send outcome`
+- [x] Implement in `Layout.swift`: `public enum TargetChipMetrics { height = 20, padding = 16, minWidth = 60, gap = 8 }`, `public struct TargetLayout: Equatable { public let chipFrame: CGRect; public let hintWidth: CGFloat }`, `public func targetLayout(containerWidth: CGFloat, labelWidth: CGFloat, hintMinX: CGFloat, hintWidth: CGFloat) -> TargetLayout`. Formula: `right = containerWidth - 12`; `want = ceil(labelWidth) + padding`; `room = right - hintMinX - ceil(hintWidth) - gap`; `w = min(want, max(room, minWidth))`; chip at `x: right - w, y: 9`; returned `hintWidth = max(right - w - hintMinX - gap, 0)`.
+- [x] Verify: `swift test --filter 'TargetPickerTests|LayoutTests'` → pass.
+- [x] Commit: `Add the target chip, the short hint and the send outcome`
 
 ### Verification
 - [ ] `scripts/coverage.sh` ends with `coverage: 100.00% >= 100%` and lists `TargetPicker.swift` with 0 missed lines.

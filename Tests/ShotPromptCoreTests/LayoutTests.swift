@@ -98,4 +98,22 @@ final class LayoutTests: XCTestCase {
                                   visible: CGRect(x: 0, y: 0, width: 1440, height: 300)),
                        CGRect(x: 1012, y: 92, width: 420, height: 200))
     }
+
+    func testTargetLayout() {
+        XCTAssertEqual(targetLayout(containerWidth: 420, labelWidth: 60.2, hintMinX: 104, hintWidth: 110),
+                       TargetLayout(chipFrame: CGRect(x: 331, y: 9, width: 77, height: 20), hintWidth: 219))
+        let wide = targetLayout(containerWidth: 420, labelWidth: 500, hintMinX: 104, hintWidth: 110)
+        XCTAssertEqual(wide.chipFrame.width, 186)
+        XCTAssertEqual(wide.hintWidth, 110, "the hint keeps its full width")
+        let error = targetLayout(containerWidth: 420, labelWidth: 500, hintMinX: 104, hintWidth: 600)
+        XCTAssertEqual(error.chipFrame.width, 60, "a long error shrinks the chip to its minimum")
+        XCTAssertEqual(error.hintWidth, 236)
+        let tiny = targetLayout(containerWidth: 100, labelWidth: 60.2, hintMinX: 104, hintWidth: 110)
+        XCTAssertEqual(tiny.chipFrame.width, 60)
+        XCTAssertEqual(tiny.hintWidth, 0, "never negative")
+        XCTAssertEqual(TargetChipMetrics.height, 20)
+        XCTAssertEqual(TargetChipMetrics.padding, 16)
+        XCTAssertEqual(TargetChipMetrics.minWidth, 60)
+        XCTAssertEqual(TargetChipMetrics.gap, 8)
+    }
 }

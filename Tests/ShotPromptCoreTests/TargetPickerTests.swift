@@ -211,4 +211,53 @@ final class TargetPickerTests: XCTestCase {
         XCTAssertEqual(resolve(), .newThread(root: "/w/x-gamma"))
         XCTAssertEqual(resolve(entries: []), .newThread(root: "/w/default"))
     }
+
+    func testCutTitle() {
+        XCTAssertEqual(cutTitle("Short"), "Short")
+        let cut = cutTitle(String(repeating: "x", count: threadTitleChars + 5))
+        XCTAssertEqual(cut.count, threadTitleChars)
+        XCTAssertTrue(cut.hasSuffix("…"))
+        XCTAssertEqual(cutTitle("abcdef", to: 4), "abc…")
+    }
+
+    func testTargetChip() {
+        let threads = [OpenThread(id: "1", title: "Fix the picker", project: "app")]
+        let entries = pickerEntries(projects: [Project(title: "A", root: "/w/a"), Project(title: "B", root: "/w/b")],
+                                    defaultRoot: "/w/a")
+        XCTAssertEqual(targetChip(.thread(id: "1"), threads: threads, entries: entries),
+                       TargetChip(label: "→ Fix the picker", toThread: true,
+                                  toolTip: "Adds to: Fix the picker · app (Tab to change)"))
+        XCTAssertEqual(targetChip(.thread(id: "9"), threads: threads, entries: entries).label, "→ thread")
+        XCTAssertTrue(targetChip(.thread(id: "9"), threads: threads, entries: entries).toThread)
+        XCTAssertEqual(targetChip(.newThread(root: "/w/a"), threads: threads, entries: entries),
+                       TargetChip(label: "+ A", toThread: false, toolTip: "New thread in /w/a (Tab to change)"))
+        let other = targetChip(.newThread(root: "/w/other"), threads: threads, entries: entries)
+        XCTAssertEqual(other.label, "+ other")
+        XCTAssertFalse(other.toThread)
+        XCTAssertEqual(other.toolTip, "New thread in /w/other (Tab to change)")
+        let long = String(repeating: "y", count: threadTitleChars + 5)
+        XCTAssertEqual(targetChip(.thread(id: "2"), threads: [OpenThread(id: "2", title: long, project: "app")],
+                                  entries: entries).label, "→ " + cutTitle(long))
+    }
+
+    func testTargetHint() {
+        XCTAssertEqual(targetHint(hasPicker: true), "↩ send · ⇥ change")
+        XCTAssertEqual(targetHint(hasPicker: false), "↩ new T3 thread · esc dismiss")
+    }
+
+    func testSendOutcome() {
+        let threads = [OpenThread(id: "1", title: "Fix the picker", project: "app")]
+        XCTAssertEqual(sendOutcome(ok: false, output: "boom", target: .thread(id: "1"), threads: threads),
+                       .failure("failed: boom"))
+        XCTAssertEqual(sendOutcome(ok: true, output: "", target: .newThread(root: "/w/a"), threads: threads), .close)
+        XCTAssertEqual(sendOutcome(ok: true, output: "", target: .thread(id: "1"), threads: threads),
+                       .notice("✓ Added to Fix the picker"))
+        let long = String(repeating: "z", count: threadTitleChars + 5)
+        XCTAssertEqual(sendOutcome(ok: true, output: "", target: .thread(id: "2"),
+                                   threads: [OpenThread(id: "2", title: long, project: "app")]),
+                       .notice("✓ Added to \(cutTitle(long))"))
+        XCTAssertEqual(sendOutcome(ok: true, output: "", target: .thread(id: "9"), threads: threads),
+                       .notice("✓ Added to thread"))
+        XCTAssertEqual(addedNoticeSeconds, 1)
+    }
 }

@@ -183,3 +183,56 @@ public func resolveTarget(picked: SendTarget?, remembered: SendTarget?, detected
                           entries: [PickerEntry], defaultRoot: String) -> SendTarget {
     picked ?? remembered ?? .newThread(root: detectedRoot ?? entries.first?.root ?? defaultRoot)
 }
+
+// A long thread title, cut with an ellipsis to `chars` characters.
+public func cutTitle(_ title: String, to chars: Int = threadTitleChars) -> String {
+    title.count > chars ? String(title.prefix(chars - 1)) + "…" : title
+}
+
+// The chip at the bottom right of the panel that names where Enter sends.
+public struct TargetChip: Equatable {
+    public let label: String
+    // Blue for an existing thread, grey for a new thread in a project.
+    public let toThread: Bool
+    public let toolTip: String
+}
+
+public func targetChip(_ target: SendTarget, threads: [OpenThread], entries: [PickerEntry]) -> TargetChip {
+    switch target {
+    case .thread(let id):
+        guard let t = threads.first(where: { $0.id == id }) else {
+            return TargetChip(label: "→ thread", toThread: true, toolTip: "Adds to an open thread (Tab to change)")
+        }
+        return TargetChip(label: "→ \(cutTitle(t.title))", toThread: true,
+                          toolTip: "Adds to: \(t.title) · \(t.project) (Tab to change)")
+    case .newThread(let root):
+        let entry = entries.first { $0.root == root }
+        let name = entry?.name ?? (root as NSString).lastPathComponent
+        let folder = entry?.toolTip ?? (root as NSString).abbreviatingWithTildeInPath
+        return TargetChip(label: "+ \(name)", toThread: false, toolTip: "New thread in \(folder) (Tab to change)")
+    }
+}
+
+// The hint next to the gear; the chip says where Enter sends.
+public func targetHint(hasPicker: Bool) -> String {
+    hasPicker ? "↩ send · ⇥ change" : "↩ new T3 thread · esc dismiss"
+}
+
+// How long "✓ Added to" shows before the panel closes.
+public let addedNoticeSeconds: TimeInterval = 1
+
+public enum SendOutcome: Equatable {
+    // A new thread opens in T3, which is confirmation enough.
+    case close
+    // Added to an existing thread: show this, then close.
+    case notice(String)
+    // Show this in red and keep the panel.
+    case failure(String)
+}
+
+public func sendOutcome(ok: Bool, output: String, target: SendTarget, threads: [OpenThread]) -> SendOutcome {
+    guard ok else { return .failure("failed: \(output)") }
+    guard case .thread(let id) = target else { return .close }
+    let title = threads.first { $0.id == id }.map { cutTitle($0.title) } ?? "thread"
+    return .notice("✓ Added to \(title)")
+}
