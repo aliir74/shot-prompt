@@ -7,8 +7,9 @@ final class ReceiverServerTests: XCTestCase {
 
     // Starts a server and waits until it listens.
     func startServer(port: UInt16, maxBody: Int = maxReceiverBody,
+                     onReply: ((HTTPRequest?, HTTPResponse) -> Void)? = nil,
                      handler: @escaping (HTTPRequest) -> HTTPResponse) throws -> ReceiverServer {
-        let server = try ReceiverServer(port: port, maxBody: maxBody, handler: handler)
+        let server = try ReceiverServer(port: port, maxBody: maxBody, onReply: onReply, handler: handler)
         let ready = expectation(description: "ready")
         server.start { error in XCTAssertNil(error); ready.fulfill() }
         wait(for: [ready], timeout: 5)
@@ -84,5 +85,26 @@ final class ReceiverServerTests: XCTestCase {
         second.start { error in XCTAssertNotNil(error); failed.fulfill() }
         wait(for: [failed], timeout: 5)
         second.stop()
+    }
+
+    func testReportsEveryReplyWithItsRequest() throws {
+        let port = freePort()
+        var lines: [String] = []
+        let lock = NSLock()
+        _ = try startServer(port: port, maxBody: 10, onReply: { req, res in
+            lock.lock(); lines.append(replyLogLine(req, res)); lock.unlock()
+        }) { _ in HTTPResponse(status: 502, message: "dispatch failed: boom") }
+        _ = exchange(port: port, [Data("POST /shot HTTP/1.1\r\nContent-Length: 2\r\n\r\nab".utf8)])
+        _ = exchange(port: port, [Data("POST / HTTP/1.1\r\nContent-Length: 99\r\n\r\n".utf8)])
+        lock.lock(); defer { lock.unlock() }
+        XCTAssertEqual(lines, ["POST /shot -> 502 dispatch failed: boom", "unparsed request -> 413 image too large"])
+    }
+
+    func testReplyLogLine() {
+        let req = HTTPRequest(method: "GET", path: "/projects")
+        XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 200, json: Data("[\"a\"]".utf8))), "GET /projects -> 200")
+        XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 200, json: Data("{}".utf8))), "GET /projects -> 200")
+        XCTAssertEqual(replyLogLine(nil, HTTPResponse(status: 400, text: "a\nb")), "unparsed request -> 400 a | b")
+        XCTAssertEqual(replyLogLine(req, HTTPResponse(status: 502, message: "abcdef"), cap: 3), "GET /projects -> 502 abc…")
     }
 }

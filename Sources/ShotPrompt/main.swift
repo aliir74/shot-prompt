@@ -1221,7 +1221,9 @@ if let settings = receiverSettings(port: UserDefaults.standard.integer(forKey: r
                      environment: config.environment, home: config.home)
         })
     do {
-        receiver = try ReceiverServer(port: settings.port) { handle($0, context) }
+        receiver = try ReceiverServer(port: settings.port, onReply: { request, response in
+            NSLog("ShotPrompt receiver: %@", replyLogLine(request, response))
+        }) { handle($0, context) }
         receiver?.start { error in
             NSLog("ShotPrompt receiver on 127.0.0.1:%d: %@", Int(settings.port), error ?? "listening")
         }
