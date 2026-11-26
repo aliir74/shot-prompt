@@ -196,24 +196,24 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 
 ### Task 2.5: "✓ Added to" confirmation (decision 12)
 **Files:** Modify: `Sources/ShotPrompt/main.swift`
-- [ ] `PromptPanel`: add `var keyable = true` and return it from `canBecomeKey`.
-- [ ] `Controller`: add `private var noticeTimer: Timer?` and `private var sent = false`. In `send()`'s completion, switch on `sendOutcome(ok: ok, output: out, target: <sent target>, threads: threads)`:
+- [x] `PromptPanel`: add `var keyable = true` and return it from `canBecomeKey`.
+- [x] `Controller`: add `private var noticeTimer: Timer?` and `private var sent = false`. In `send()`'s completion, switch on `sendOutcome(ok: ok, output: out, target: <sent target>, threads: threads)`:
   - Before the switch, for both `.close` and `.notice`: keep Task 2.4's `lastTarget = LastTarget(target: <sent target>, at: Date())`. This task's own checks would not catch its loss.
   - `.close`: as today (`animationBehavior = .none`, `dismiss()`).
   - `.failure(let message)`: as today, with `message` as the red status text, then `layoutStatus()`.
   - `.notice(let text)`: `sent = true`; hide the chip and the gear; show `text` in the status label across the row in `systemGreen` (set its frame to the full row: `x` = the hint's current `minX`, width = content width − that x − 12, since `layoutStatus()` had sized it to `hintWidth`); give the keyboard back to the app in front (`panel.keyable = false`, `panel.orderOut(nil)`, `panel.orderFrontRegardless()`, no `makeKey`); `noticeTimer = Timer.scheduledTimer(withTimeInterval: addedNoticeSeconds, repeats: false) { [weak self] _ in self?.dismiss() }`.
-- [ ] `dismiss()` invalidates `noticeTimer` and resets `sent`, so a stale timer can never close the next capture's panel. `show(_:)` passes `hasText: hasText && !sent` to `captureAction`, so a capture taken during the notice gets its own icon instead of being ignored. `dismissIfEmpty()` returns when `sent`.
+- [x] `dismiss()` invalidates `noticeTimer` and resets `sent`, so a stale timer can never close the next capture's panel. `show(_:)` passes `hasText: hasText && !sent` to `captureAction`, so a capture taken during the notice gets its own icon instead of being ignored. `dismissIfEmpty()` returns when `sent`.
 - [ ] Verify: `swift build -c release --product ShotPrompt` → `Build complete!`. Live (fixture, `SHOT_PROMPT_DISPATCH=/usr/bin/true`):
   1. Send to a thread: the panel shows `✓ Added to <title>` for about 1 s, then closes; the frontmost-app `osascript` check from Task 2.3 prints the stock app throughout, and keys typed during that second land in the stock app's window.
   2. Send to a project: the panel closes at once, no notice.
   3. With `SHOT_PROMPT_DISPATCH=/usr/bin/false`: the red `failed:` text shows, the panel stays, the prompt is editable again.
   4. Drop a new capture during the notice: a new icon appears and stays after the old notice time has passed.
   5. Regression for Task 2.4: after the send in step 1, the next capture's panel opens with the blue chip on that thread.
-- [ ] Commit: `Confirm a send into an existing thread before closing`
+- [x] Commit: `Confirm a send into an existing thread before closing`
 
 ### Verification
-- [ ] `scripts/coverage.sh` → `coverage: 100.00% >= 100%`; `swift build -c release --product ShotPrompt` → `Build complete!`.
-- [ ] `grep -n "statusHint\|statusLayout\|threadEntries\|clearReturn\|NSPopUpButton" -r Sources Tests` → no output.
+- [x] `scripts/coverage.sh` → `coverage: 100.00% >= 100%`; `swift build -c release --product ShotPrompt` → `Build complete!`.
+- [x] `grep -n "statusHint\|statusLayout\|threadEntries\|clearReturn\|NSPopUpButton" -r Sources Tests` → no output.
 - [ ] All 12 decisions seen once on the fixture in the live checks of Tasks 2.2 to 2.5, each ticked there (the expiry time of decision 8 by its Core tests only).
 
 ## Phase 3: Docs, real send, media and PR
@@ -273,6 +273,9 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 | Task 2.3: `TargetPopup.rows` is `private(set)` (not `private`), plus a `show(_:selected:)` method; the controller's `onResize` reads `rows` for `popupHeight` | The controller places the popup; it needs the current rows' height. `show` is the shared reload-select-scroll path for the first rows and for typing |
 | Task 2.3: the row cells are a small `PopupCell` view and the list a `PopupTable` (also `acceptsFirstMouse`) | Plan names the behaviour, not the classes; first-mouse makes a row click work in one click |
 | Task 2.3: `onPick` also clears the status toolTip when it resets a red `failed:` message | The failure path sets the toolTip to the error; it would otherwise outlive the message |
+| Task 2.5: the send completion records `lastTarget`, then returns early when the panel it belongs to is gone (`self.field !== f`) | Esc during a send closes the panel and a newer capture may be up; the completion (and a notice timer) must not touch or close it. Same staleness check as the context read's `contextReads` |
+| Task 2.5: the notice code is a `showNotice(_:)` method; the local sent target in `send()` is named `sentTo` | Keeps the completion short; `sent` is the new Bool flag |
+| Task 2.1: thread times use `.000Z` milliseconds, and `make-fixture.sh` takes the fixture folder as `$1` (default: its own folder) | `date -u` gives whole seconds; the format still matches T3's |
 
 ---
 

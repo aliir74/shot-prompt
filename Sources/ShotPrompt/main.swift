@@ -44,7 +44,9 @@ let config = Config(environment: ProcessInfo.processInfo.environment,
                     home: FileManager.default.homeDirectoryForCurrentUser)
 
 final class PromptPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    // Off while "✓ Added to" shows, so the keys go back to the app in front.
+    var keyable = true
+    override var canBecomeKey: Bool { keyable }
 
     // Cmd+A, Cmd+V and the other edit shortcuts, which a menu bar would map.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -349,6 +351,9 @@ final class Controller: NSObject, NSTextViewDelegate {
     private var detectedRoot: String?
     // Where the last send went. It outlives the panel, in memory only.
     private var lastTarget: LastTarget?
+    // A send into an open thread worked: "✓ Added to" shows until the timer closes the panel.
+    private var noticeTimer: Timer?
+    private var sent = false
     // The search popup Tab or a chip click opens, and when it last lost the keys.
     private var popup: TargetPopup?
     private var popupObserver: NSObjectProtocol?
@@ -436,7 +441,7 @@ final class Controller: NSObject, NSTextViewDelegate {
                                 capturedBundleID: app?.bundleIdentifier)
         // A new capture while typing joins the prompt's screenshots. While a
         // send is running, the sent screenshots stay.
-        switch captureAction(hasText: hasText, editable: field?.isEditable ?? true,
+        switch captureAction(hasText: hasText && !sent, editable: field?.isEditable ?? true,
                              count: 1 + extraImages.count, pasteIntoT3: toT3) {
         case .ignore:
             return
@@ -1215,7 +1220,7 @@ final class Controller: NSObject, NSTextViewDelegate {
 
     private func dismissIfEmpty() {
         // The panel resigns key when the popup takes the keys.
-        if hasText || menuOpen || popup != nil { return }
+        if hasText || menuOpen || popup != nil || sent { return }
         // Still dictating: look again later instead of closing.
         if dictating { return armIdle() }
         dismiss()
@@ -1292,9 +1297,9 @@ final class Controller: NSObject, NSTextViewDelegate {
         guard let typed = sendablePrompt(f.string) else { return }
         let prompt = promptWithContext(typed, context, captures: 1 + extraImages.count)
         let images = [url] + [context.windowShot].compactMap { $0 } + extraImages
-        let sent = target
+        let sentTo = target
         let cwd: String, thread: String?
-        switch sent {
+        switch sentTo {
         case .newThread(let root): cwd = root; thread = nil
         case .thread(let id): cwd = config.threadCwd; thread = id
         }
@@ -1307,17 +1312,27 @@ final class Controller: NSObject, NSTextViewDelegate {
             let (ok, out) = dispatch(executable: config.dispatchBin, prompt: prompt, images: images, cwd: cwd,
                                      environment: config.environment, home: config.home, thread: thread)
             DispatchQueue.main.async {
-                if ok {
-                    self.lastTarget = LastTarget(target: sent, at: Date())
+                let outcome = sendOutcome(ok: ok, output: out, target: sentTo, threads: self.threads)
+                switch outcome {
+                case .close, .notice: self.lastTarget = LastTarget(target: sentTo, at: Date())
+                case .failure: break
+                }
+                // Esc during the send closed this panel, and a newer capture
+                // may be on screen: leave it alone.
+                guard self.field === f else { return }
+                switch outcome {
+                case .close:
                     // The thread is already open in T3; vanish at once, no fade.
                     self.panel?.animationBehavior = .none
                     self.dismiss()
-                } else {
+                case .notice(let text):
+                    self.showNotice(text)
+                case .failure(let message):
                     f.isEditable = true
                     self.chip?.isEnabled = true
                     self.chipViews.forEach { $0.isEnabled = true }
                     self.status?.toolTip = out
-                    self.status?.stringValue = "failed: " + out
+                    self.status?.stringValue = message
                     self.status?.textColor = .systemRed
                     self.layoutStatus()
                     NSLog("ShotPrompt dispatch failed: %@", out)
@@ -1326,8 +1341,35 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
     }
 
+    // "✓ Added to <thread>" across the status row for a moment, while the
+    // keyboard goes back to the app in front; then the panel closes.
+    private func showNotice(_ text: String) {
+        sent = true
+        chip?.isHidden = true
+        gear?.isHidden = true
+        if let s = status, let content = s.superview {
+            s.frame.size.width = max(content.bounds.width - s.frame.minX - 12, 0)
+            s.stringValue = text
+            s.textColor = .systemGreen
+            s.toolTip = nil
+        }
+        if let p = panel {
+            p.keyable = false
+            // No fade: the notice must not blink.
+            p.animationBehavior = .none
+            p.orderOut(nil)
+            p.orderFrontRegardless()
+        }
+        noticeTimer = Timer.scheduledTimer(withTimeInterval: addedNoticeSeconds, repeats: false) { [weak self] _ in
+            self?.dismiss()
+        }
+    }
+
     private func dismiss() {
         closePopup(refocus: false)
+        noticeTimer?.invalidate()
+        noticeTimer = nil
+        sent = false
         idleTimer?.invalidate()
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         keyMonitor = nil
