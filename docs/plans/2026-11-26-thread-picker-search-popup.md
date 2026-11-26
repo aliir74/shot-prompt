@@ -275,6 +275,7 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 | Task 2.3: `onPick` also clears the status toolTip when it resets a red `failed:` message | The failure path sets the toolTip to the error; it would otherwise outlive the message |
 | Task 2.5: the send completion records `lastTarget`, then returns early when the panel it belongs to is gone (`self.field !== f`) | Esc during a send closes the panel and a newer capture may be up; the completion (and a notice timer) must not touch or close it. Same staleness check as the context read's `contextReads` |
 | Task 2.5: the notice code is a `showNotice(_:)` method; the local sent target in `send()` is named `sentTo` | Keeps the completion short; `sent` is the new Bool flag |
+| Task 2.5: the failure is logged before the stale-panel check; the row cells are `NSTableCellView`s | A failed send after Esc still leaves its log line; a table cell view forwards the selected row's style so its labels stay readable on the accent colour |
 | Task 2.1: thread times use `.000Z` milliseconds, and `make-fixture.sh` takes the fixture folder as `$1` (default: its own folder) | `date -u` gives whole seconds; the format still matches T3's |
 
 ---

@@ -147,8 +147,9 @@ final class PopupRowView: NSTableRowView {
 }
 
 // One row: a thread's title with its project and time ago on the right, a
-// project's name, or a section header.
-final class PopupCell: NSView {
+// project's name, or a section header. A table cell view passes the selected
+// row's style to its labels, so they turn light on the accent colour.
+final class PopupCell: NSTableCellView {
     private let title: NSTextField
     private let detail: NSTextField?
 
@@ -1315,7 +1316,7 @@ final class Controller: NSObject, NSTextViewDelegate {
                 let outcome = sendOutcome(ok: ok, output: out, target: sentTo, threads: self.threads)
                 switch outcome {
                 case .close, .notice: self.lastTarget = LastTarget(target: sentTo, at: Date())
-                case .failure: break
+                case .failure: NSLog("ShotPrompt dispatch failed: %@", out)
                 }
                 // Esc during the send closed this panel, and a newer capture
                 // may be on screen: leave it alone.
@@ -1335,7 +1336,6 @@ final class Controller: NSObject, NSTextViewDelegate {
                     self.status?.stringValue = message
                     self.status?.textColor = .systemRed
                     self.layoutStatus()
-                    NSLog("ShotPrompt dispatch failed: %@", out)
                 }
             }
         }
