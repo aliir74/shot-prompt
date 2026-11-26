@@ -5,6 +5,10 @@
 
 Take a screenshot (macOS's own Cmd+Shift+4, or [Shottr](https://shottr.cc)), start typing (or click the icon), press Enter: your screenshot and prompt go to the AI tool you use, in the project you are working on. With [T3 Code](https://t3.codes), it can also join a thread already open there.
 
+![ShotPrompt demo: Cmd+Shift+4 over a checkout error, type a question, press Enter, and Claude Code fixes the bug](docs/media/demo.gif)
+
+*A capture of a broken checkout page goes to Claude Code with the page's context; Claude finds and fixes the missing `return`. Claude's part runs at 4x. [MP4](docs/media/demo.mp4)*
+
 ## Send to
 
 Pick where Enter sends in the menu bar menu (the viewfinder icon), under **Send to**. On first launch ShotPrompt picks the first one it finds installed, in this order:
