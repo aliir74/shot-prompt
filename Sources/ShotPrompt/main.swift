@@ -1423,17 +1423,20 @@ if !runByLaunchAgent && Bundle.main.bundleIdentifier != nil
 let welcomedKey = "welcomed"
 if !runByLaunchAgent && !UserDefaults.standard.bool(forKey: welcomedKey) {
     UserDefaults.standard.set(true, forKey: welcomedKey)
-    let alert = NSAlert()
-    alert.messageText = "ShotPrompt is running"
-    alert.informativeText = """
-        Take a screenshot (Cmd+Shift+4), start typing, and press Enter. \
-        It goes to \(currentTarget().title) with your screenshot.
+    // Once the run loop is up, so the alert comes forward like any app's.
+    DispatchQueue.main.async {
+        let alert = NSAlert()
+        alert.messageText = "ShotPrompt is running"
+        alert.informativeText = """
+            Take a screenshot (Cmd+Shift+4), start typing, and press Enter. \
+            It goes to \(currentTarget().title) with your screenshot.
 
-        The menu bar icon (a viewfinder) changes where it goes and what it sends. \
-        macOS asks once for the Desktop folder, where screenshots are saved.
-        """
-    NSApp.activate(ignoringOtherApps: true)
-    alert.runModal()
+            The menu bar icon (a viewfinder) changes where it goes and what it sends. \
+            macOS asks once for the Desktop folder, where screenshots are saved.
+            """
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
 }
 let controller = Controller()
 controller.start()
