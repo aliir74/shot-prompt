@@ -80,6 +80,10 @@ final class ProjectMatchTests: XCTestCase {
         XCTAssertEqual(lsofField("p9\nfcwd\nn/Users/a/x\n", "n"), "/Users/a/x")
         XCTAssertNil(lsofField("p\n", "p"))
         XCTAssertNil(lsofField("", "n"))
+        // One server listening on IPv4 and IPv6 is one process.
+        XCTAssertEqual(lsofField("p77\nf3\nn127.0.0.1:8765\nf4\nn[::1]:8765\n", "p"), "77")
+        // Two servers on one port: no guess.
+        XCTAssertNil(lsofField("p1555\nf3\nn127.0.0.1:8765\np2040\nf4\nn*:8765\n", "p"))
     }
 
     func testChipLayout() {
