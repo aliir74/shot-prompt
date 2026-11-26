@@ -978,6 +978,14 @@ final class Controller: NSObject, NSTextViewDelegate {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             let w = event.window
+            // Keys typed fast after the first one were queued for the icon,
+            // which the first key just closed: they belong in the new prompt.
+            if let f = self.field, let stale = w as? PromptPanel, stale !== self.panel, stale !== self.icon,
+               stale !== self.popup?.window, self.popup == nil, !self.menuOpen,
+               event.modifierFlags.intersection([.command, .control]).isEmpty {
+                f.keyDown(with: event)
+                return nil
+            }
             let ours = !self.menuOpen && w != nil
                 && (w === self.panel || w === self.icon || w === self.popup?.window)
             switch keyAction(isOurs: ours, isEscape: event.keyCode == 53,

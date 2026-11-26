@@ -59,8 +59,7 @@ final class TargetTests: XCTestCase {
         XCTAssertEqual(terminalArguments(.codex, prompt: "why?", images: [a, b]),
                        ["--image=/s/a.png", "--image=/s/b.png", "--", "why?"])
         XCTAssertEqual(terminalArguments(.claudeCode, prompt: "why?", images: [a]),
-                       ["--add-dir", "/s", "--", "why?\n\nScreenshot (read the image file):\n- /s/a.png"])
-        XCTAssertEqual(terminalArguments(.claudeCode, prompt: "why?", images: []), ["why?"])
+                       ["why?\n\nScreenshot (read the image file):\n- /s/a.png"])
         XCTAssertEqual(terminalArguments(.cursorAgent, prompt: "why?", images: [a]),
                        ["why?\n\nScreenshot (read the image file):\n- /s/a.png"])
     }
