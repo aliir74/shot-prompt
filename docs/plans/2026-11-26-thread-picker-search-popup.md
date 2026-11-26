@@ -112,9 +112,9 @@ Ground rules for all three phases (repo: `/Users/aliirani/.t3/worktrees/shot-pro
 - [x] Commit: `Add the target chip, the short hint and the send outcome`
 
 ### Verification
-- [ ] `scripts/coverage.sh` ends with `coverage: 100.00% >= 100%` and lists `TargetPicker.swift` with 0 missed lines.
-- [ ] `swift build -c release --product ShotPrompt` → `Build complete!` (the shell still compiles and still uses the old menu).
-- [ ] `git diff 20b1392 --stat -- Sources/ShotPrompt/main.swift` shows only the one-line `.closePopup` placeholder.
+- [x] `scripts/coverage.sh` ends with `coverage: 100.00% >= 100%` and lists `TargetPicker.swift` with 0 missed lines.
+- [x] `swift build -c release --product ShotPrompt` → `Build complete!` (the shell still compiles and still uses the old menu).
+- [x] `git diff 20b1392 --stat -- Sources/ShotPrompt/main.swift` shows only the one-line `.closePopup` placeholder.
 
 ## Phase 2: AppKit shell (chip, popup, memory, confirmation)
 
@@ -265,6 +265,9 @@ Shell tasks have no unit tests. Each ends with `swift build -c release --product
 | Last target lives in memory only; every successful send records it (a project send too) | Draft assumption, matches decision 7 |
 | Tab and Shift+Tab in the popup close it, like Esc | Draft assumption |
 | Commit subjects use the repo's plain-sentence style | `git log` style |
+| Task 1.3: a detected or current root that is not among the picker entries adds no project row | Rows need the entry's name and toolTip; `matchProject` only returns T3 project roots, which are always entries |
+| Task 1.4: `lastTargetMinutes` has no separate NSNumber branch | An NSNumber (what UserDefaults returns) bridges to `Int` in `as? Int`, so a second branch would be an uncovered line |
+| Task 1.5: chip toolTip for an unknown thread id is `Adds to an open thread (Tab to change)`; for a root outside the entries, `New thread in <path with ~>` | The plan named only the labels for these two cases |
 
 ---
 
