@@ -9,10 +9,13 @@ public func clamp(origin: CGPoint, size: CGSize, in visible: CGRect, margin: CGF
 
 public let iconSize: CGFloat = 56
 
-// The mouse is where the capture region ended; the icon sits just past it.
-public func iconOrigin(mouse: CGPoint, visible: CGRect) -> CGPoint {
-    clamp(origin: CGPoint(x: mouse.x + 8, y: mouse.y - iconSize - 8),
-          size: CGSize(width: iconSize, height: iconSize), in: visible)
+// The icon sits just inside the capture's top-left corner (screen coordinates,
+// y up). Without the capture's region, it sits just past the mouse, which is
+// where the capture region ended.
+public func iconOrigin(capture: CGRect?, mouse: CGPoint, visible: CGRect) -> CGPoint {
+    let origin = capture.map { CGPoint(x: $0.minX + 8, y: $0.maxY - iconSize - 8) }
+        ?? CGPoint(x: mouse.x + 8, y: mouse.y - iconSize - 8)
+    return clamp(origin: origin, size: CGSize(width: iconSize, height: iconSize), in: visible)
 }
 
 public enum PanelMetrics {

@@ -4,8 +4,8 @@
 //
 // macOS saves its captures to the Desktop (or the screencapture "location"),
 // Shottr to ~/Pictures as SCR-*.png ("Save after capture" on); both tag the
-// file as a screen capture. A new one in either folder pops a small thumbnail icon by the mouse, which is where
-// the capture region ended. Typing, or clicking the icon, opens the prompt
+// file as a screen capture. A new one in either folder pops a small thumbnail icon at the capture's
+// top-left corner (by the mouse when the region is unknown). Typing, or clicking the icon, opens the prompt
 // panel. Both are non-activating: they take the keyboard without bringing this
 // app forward, so no Accessibility or Input Monitoring permission is needed.
 // Enter sends the prompt through `t3-dispatch --image`. The icon stays when you
@@ -935,7 +935,7 @@ final class Controller: NSObject, NSTextViewDelegate {
         }
     }
 
-    // The icon by the mouse for a new capture.
+    // The icon at the top-left corner of a new capture.
     private func showIcon(_ url: URL) {
         dismiss()
         image = url
@@ -976,8 +976,16 @@ final class Controller: NSObject, NSTextViewDelegate {
         content.addSubview(click)
 
         let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
-        p.setFrameOrigin(iconOrigin(mouse: mouse, visible: screen.visibleFrame))
+        // The capture's region, back in screen coordinates (topLeft flips both ways).
+        let capture = NSScreen.screens.first.flatMap { primary in
+            captureRegion(of: url).map { topLeft($0, primaryHeight: primary.frame.height) }
+        }
+        // The screen with the capture's corner; when the corner is in a gap between
+        // screens, the one with the mouse, where the capture ended.
+        let corner = capture.map { CGPoint(x: $0.minX, y: $0.maxY - 1) }
+        let screen = corner.flatMap { c in NSScreen.screens.first { $0.frame.contains(c) } }
+            ?? NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
+        p.setFrameOrigin(iconOrigin(capture: capture, mouse: mouse, visible: screen.visibleFrame))
 
         icon = p
         p.orderFrontRegardless()

@@ -15,9 +15,17 @@ final class LayoutTests: XCTestCase {
     }
 
     func testIconOrigin() {
-        XCTAssertEqual(iconOrigin(mouse: CGPoint(x: 400, y: 400), visible: screen), CGPoint(x: 408, y: 336))
+        let mouse = CGPoint(x: 600, y: 200)
+        // Inside the capture's top-left corner, not by the mouse.
+        let capture = CGRect(x: 200, y: 200, width: 400, height: 300)
+        XCTAssertEqual(iconOrigin(capture: capture, mouse: mouse, visible: screen), CGPoint(x: 208, y: 436))
+        // A capture at the top-left of the screen keeps the icon on it.
+        XCTAssertEqual(iconOrigin(capture: CGRect(x: -5, y: 700, width: 100, height: 110), mouse: mouse,
+                                  visible: screen), CGPoint(x: 8, y: 736))
+        // No region known: just past the mouse.
+        XCTAssertEqual(iconOrigin(capture: nil, mouse: CGPoint(x: 400, y: 400), visible: screen), CGPoint(x: 408, y: 336))
         // At the bottom right corner it stays on screen.
-        XCTAssertEqual(iconOrigin(mouse: CGPoint(x: 999, y: 1), visible: screen), CGPoint(x: 936, y: 8))
+        XCTAssertEqual(iconOrigin(capture: nil, mouse: CGPoint(x: 999, y: 1), visible: screen), CGPoint(x: 936, y: 8))
     }
 
     func testPanelOrigin() {
