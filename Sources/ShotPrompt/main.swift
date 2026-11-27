@@ -980,8 +980,11 @@ final class Controller: NSObject, NSTextViewDelegate {
         let capture = NSScreen.screens.first.flatMap { primary in
             captureRegion(of: url).map { topLeft($0, primaryHeight: primary.frame.height) }
         }
-        let at = capture.map { CGPoint(x: $0.minX, y: $0.maxY - 1) } ?? mouse
-        let screen = NSScreen.screens.first { $0.frame.contains(at) } ?? NSScreen.main!
+        // The screen with the capture's corner; when the corner is in a gap between
+        // screens, the one with the mouse, where the capture ended.
+        let corner = capture.map { CGPoint(x: $0.minX, y: $0.maxY - 1) }
+        let screen = corner.flatMap { c in NSScreen.screens.first { $0.frame.contains(c) } }
+            ?? NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main!
         p.setFrameOrigin(iconOrigin(capture: capture, mouse: mouse, visible: screen.visibleFrame))
 
         icon = p
